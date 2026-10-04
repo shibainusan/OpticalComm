@@ -50,11 +50,15 @@ sealed interface DecodeEvent {
     /** プリアンブル(K28.5×2)を検出した。 */
     data object PreambleOk : DecodeEvent
     data class PreambleFail(val reason: String) : DecodeEvent
-    /** プリアンブル後の 8b/10b 符号が不正(無効符号・ディスパリティ違反など)。 */
+    /** LEN が復号できない/不正で、以降を受信し続けられない。 */
     data class SymbolError(val reason: String) : DecodeEvent
-    /** CRC が一致した場合のみ。 */
+    /** 符号エラーなし かつ CRC 一致の場合のみ。 */
     data class Message(val text: String) : DecodeEvent
-    data class CrcError(val length: Int) : DecodeEvent
+    /**
+     * 符号エラーまたは CRC 不一致。LEN 分は受信し続けるので、化けた [text] も得られる。
+     * [symbolErrors] は 8b/10b として不正だったシンボル数。
+     */
+    data class CrcError(val length: Int, val text: String, val symbolErrors: Int) : DecodeEvent
 }
 
 enum class DecoderState { HUNT, LENGTH, PAYLOAD, CRC }
@@ -86,13 +90,21 @@ class BitStreamDecoder {
     var lastByte = -1
         private set
 
+    /** 直近の push で復号した 10bit シンボルが 8b/10b として不正だったら true(この場合 lastByte は -1)。 */
+    var lastSymbolError = false
+        private set
+
     private var zeroRun = ARM_ZEROS
     private var huntBits = 0
     private var window = 0
     private var cur = 0
     private var curBits = 0
     private var rd = false
+
+    /** 8b/10b エラー直後は RD が信用できないので、次のシンボルで再同期するまで false。 */
+    private var rdKnown = true
     private var length = 0
+    private var symbolErrors = 0
     private val payload = java.io.ByteArrayOutputStream()
 
     /** フレーム終了後など。次の点灯をすぐ候補にできる。 */
@@ -111,10 +123,12 @@ class BitStreamDecoder {
         cur = 0
         curBits = 0
         payload.reset()
+        symbolErrors = 0
     }
 
     fun push(bit: Boolean): DecodeEvent? {
         lastByte = -1
+        lastSymbolError = false
         val v = if (bit) 1 else 0
         if (state == DecoderState.HUNT) {
             // 点灯検出より前のビットも含めて常に窓へ入れる
@@ -136,7 +150,9 @@ class BitStreamDecoder {
                 cur = 0
                 curBits = 0
                 rd = false
+                rdKnown = true
                 payload.reset()
+                symbolErrors = 0
                 return DecodeEvent.PreambleOk
             }
             if (active && huntBits >= HUNT_LIMIT_BITS) {
@@ -150,16 +166,28 @@ class BitStreamDecoder {
         val code = cur.toString(2).padStart(10, '0')
         cur = 0
         curBits = 0
-        val sym = when (val d = Code8b10b.decode(code, rd)) {
-            is Code8b10b.Decoded.Error -> {
-                resetTo(rearmed = false)
-                return DecodeEvent.SymbolError(d.reason)
+        val byte: Int
+        when (val d = Code8b10b.decode(code, if (rdKnown) rd else null)) {
+            is Code8b10b.Decoded.Data -> {
+                byte = d.byte
+                rd = d.rdAfter
+                rdKnown = true
+                lastByte = byte
             }
-            is Code8b10b.Decoded.Data -> d
+            is Code8b10b.Decoded.Error -> {
+                if (state == DecoderState.LENGTH) {
+                    // LEN が分からないと何バイト受信すべきか決められないので打ち切る
+                    resetTo(rearmed = false)
+                    return DecodeEvent.SymbolError(d.reason)
+                }
+                // 以降は LEN 分を推定バイトで受信し続け、化けた文字列も見られるようにする
+                byte = Code8b10b.lenientByte(code)
+                rd = Code8b10b.rdAfter(code, rd)
+                rdKnown = false
+                symbolErrors++
+                lastSymbolError = true
+            }
         }
-        rd = sym.rdAfter
-        val byte = sym.byte
-        lastByte = byte
         when (state) {
             DecoderState.LENGTH -> {
                 if (byte > MAX_PAYLOAD_BYTES) {
@@ -177,9 +205,11 @@ class BitStreamDecoder {
                 val data = payload.toByteArray()
                 val crc = Crc8.compute(byteArrayOf(length.toByte()) + data)
                 val len = length
+                val errors = symbolErrors
+                val text = String(data, Charsets.UTF_8)
                 reset()
-                return if (crc == byte) DecodeEvent.Message(String(data, Charsets.UTF_8))
-                else DecodeEvent.CrcError(len)
+                return if (crc == byte && errors == 0) DecodeEvent.Message(text)
+                else DecodeEvent.CrcError(len, text, errors)
             }
             DecoderState.HUNT -> Unit
         }

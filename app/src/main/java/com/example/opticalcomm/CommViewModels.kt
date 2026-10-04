@@ -89,6 +89,9 @@ class ReceiverViewModel : ViewModel() {
                     if (decoder.lastByte >= 0) {
                         hexTokens.add("0x%02X".format(decoder.lastByte))
                         partial.clear()
+                    } else if (decoder.lastSymbolError) {
+                        hexTokens.add("[$partial]")
+                        partial.clear()
                     }
                 } else {
                     if (curCount > 0 && curCount % 10 == 0) curBits.append(' ')
@@ -109,8 +112,9 @@ class ReceiverViewModel : ViewModel() {
                     log.add("受信: ${ev.text}")
                 }
                 is DecodeEvent.CrcError -> {
-                    endLine("←CRC NG(len=${ev.length})")
-                    log.add("CRCエラー(len=${ev.length})")
+                    val why = if (ev.symbolErrors > 0) "符号エラー${ev.symbolErrors}個" else "CRC不一致"
+                    endLine("←NG(len=${ev.length}, $why)")
+                    log.add("受信(エラー): ${ev.text}")
                 }
                 null -> Unit
             }

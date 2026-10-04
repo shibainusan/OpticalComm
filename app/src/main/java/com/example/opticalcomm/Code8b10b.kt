@@ -84,9 +84,23 @@ object Code8b10b {
         data class Error(val reason: String) : Decoded
     }
 
-    fun decode(code: String, rd: Boolean): Decoded {
+    /** エラー時でも表示用に推定するバイト。ディスパリティ違反だけなら元のバイト、無効符号は 0xFF(UTF-8として不正)。 */
+    fun lenientByte(code: String): Int = dataByCode[code] ?: 0xFF
+
+    /** 符号語の1の数から求めた次の RD。エラー後も RD を追従させてシンボル復号を続けるために使う。 */
+    fun rdAfter(code: String, rd: Boolean): Boolean = nextRd(code, rd)
+
+    /**
+     * @param rd 現在の RD。`null` は不明(直前にエラーがあった場合)で、ディスパリティ検査は行わず、
+     * 符号語自身から開始 RD を割り出して以降の RD を再同期する。
+     */
+    fun decode(code: String, rd: Boolean?): Decoded {
         if (code in commaCodes) return Decoded.Error("想定外のK28.5")
         val byte = dataByCode[code] ?: return Decoded.Error("無効な10bit符号($code)")
+        if (rd == null) {
+            val sym = encodeData(byte, false).takeIf { it.bits == code } ?: encodeData(byte, true)
+            return Decoded.Data(byte, sym.rdAfter)
+        }
         val expected = encodeData(byte, rd)
         if (expected.bits != code) return Decoded.Error("ディスパリティ違反($code)")
         return Decoded.Data(byte, expected.rdAfter)

@@ -38,6 +38,19 @@ class ProtocolTest {
     }
 
     @Test
+    fun keepsReceivingLengthBytesAfterSymbolError() {
+        val bits = Frame.encode("hello").toMutableList()
+        // 本文1文字目のシンボル(bit 30..39)を無効符号にする
+        for (i in 30..39) bits[i] = true
+        val ev = decodeAllEvents(bits).last()
+        assertTrue(ev is DecodeEvent.CrcError)
+        ev as DecodeEvent.CrcError
+        assertEquals(5, ev.length)
+        assertEquals(1, ev.symbolErrors)
+        assertEquals("�ello", ev.text)
+    }
+
+    @Test
     fun reportsCrcNg() {
         val ev = decodeAllEvents(Frame.encode("hello", crcCorruption = 1))
         assertEquals(DecodeEvent.PreambleOk, ev.first())
