@@ -1,7 +1,7 @@
 package com.example.opticalcomm
 
 /** 1ビットあたりの時間。端末のトーチ応答とカメラ30fpsに余裕を持たせた値。 */
-const val BIT_MS = 200L
+const val BIT_MS = 100L
 
 /** 送信開始前の消灯時間(受信側の閾値校正用)。 */
 const val LEAD_IDLE_MS = 1000L
