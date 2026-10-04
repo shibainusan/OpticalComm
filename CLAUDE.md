@@ -12,8 +12,8 @@ Run from the repo root (Gradle Kotlin DSL, version catalog in `gradle/libs.versi
 ./gradlew test --tests "*ProtocolTest.roundTripAsciiAndJapanese"   # single test
 ./gradlew assembleDebug                          # build APK
 ```
-- Gradle wrapper (8.9) is committed; use `./gradlew`.
-- `local.properties` (sdk.dir) is gitignored. On this machine the JDK is Android Studio's `jbr`; no system Java/Gradle. Gradle failed here with "Unable to establish loopback connection", so builds have not been verified locally.
+- Gradle wrapper (9.8.0) is committed; use `./gradlew`. Needs `JAVA_HOME` set (e.g. `C:\Program Files\Android\Android Studio\jbr`); `test assembleDebug` is verified to pass from a user terminal.
+- `local.properties` (sdk.dir) is gitignored. From inside Claude Code sessions on this machine Gradle fails with "Unable to establish loopback connection"; ask the user to run Gradle in their own terminal or Android Studio.
 
 ## Architecture
 Receive pipeline: `LightReceiver` (CameraX ImageAnalysis → `(timestampNs, luminance)`) → `SignalSlicer` (adaptive threshold + edge resync → bits) → `BitStreamDecoder` (→ `DecodeEvent`) → `ReceiverViewModel` StateFlow → Compose UI. Send pipeline: `SenderViewModel` → `Frame.encode` → `TorchSender`.
