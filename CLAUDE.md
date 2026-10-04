@@ -12,7 +12,7 @@ Run from the repo root (Gradle Kotlin DSL, version catalog in `gradle/libs.versi
 ./gradlew test --tests "*ProtocolTest.roundTripAsciiAndJapanese"   # single test
 ./gradlew assembleDebug                          # build APK
 ```
-- `gradlew` and the wrapper jar are not committed (only `gradle/gradle-wrapper.properties`, Gradle 8.9). Generate with `gradle wrapper --gradle-version 8.9` or open in Android Studio.
+- Gradle wrapper (8.9) is committed; use `./gradlew`.
 - `local.properties` (sdk.dir) is gitignored. On this machine the JDK is Android Studio's `jbr`; no system Java/Gradle. Gradle failed here with "Unable to establish loopback connection", so builds have not been verified locally.
 
 ## Architecture
