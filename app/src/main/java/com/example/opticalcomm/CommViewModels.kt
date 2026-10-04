@@ -70,6 +70,12 @@ class ReceiverViewModel : ViewModel() {
     private val bitLines = ArrayList<String>()
     private val curBits = StringBuilder()
     private var curCount = 0
+
+    /** プリアンブル受信後は 10bit 復号済みのバイトを HEX トークンにして表示する。 */
+    private var inFrame = false
+    private val hexTokens = ArrayList<String>()
+    private val partial = StringBuilder()
+
     private val _state = MutableStateFlow(ReceiverUiState())
     val state: StateFlow<ReceiverUiState> = _state
     private val window = ArrayDeque<Float>()
@@ -78,17 +84,26 @@ class ReceiverViewModel : ViewModel() {
         val ev = decoder.push(bit)
         synchronized(log) {
             if (decoder.active || ev != null) {
-                if (curCount > 0 && curCount % 10 == 0) curBits.append(' ')
-                curBits.append(if (bit) '1' else '0')
-                curCount++
+                if (inFrame) {
+                    partial.append(if (bit) '1' else '0')
+                    if (decoder.lastByte >= 0) {
+                        hexTokens.add("0x%02X".format(decoder.lastByte))
+                        partial.clear()
+                    }
+                } else {
+                    if (curCount > 0 && curCount % 10 == 0) curBits.append(' ')
+                    curBits.append(if (bit) '1' else '0')
+                    curCount++
+                }
             }
             when (ev) {
                 DecodeEvent.PreambleOk -> {
                     regroupFromEnd()
                     endLine("←プリアンブル受信成功")
+                    inFrame = true
                 }
-                is DecodeEvent.SymbolError -> endLine("←8b/10b不正(${ev.reason})")
                 is DecodeEvent.PreambleFail -> endLine("←プリアンブル失敗(${ev.reason})")
+                is DecodeEvent.SymbolError -> endLine("←8b/10b不正(${ev.reason})")
                 is DecodeEvent.Message -> {
                     endLine("←CRC OK")
                     log.add("受信: ${ev.text}")
@@ -101,6 +116,10 @@ class ReceiverViewModel : ViewModel() {
             }
         }
     }
+
+    private fun currentLine(): String =
+        if (inFrame) (hexTokens + listOfNotNull(partial.takeIf { it.isNotEmpty() }?.toString())).joinToString(" ")
+        else curBits.toString()
 
     /** 点灯検出前の先頭ビットが欠けるため、10bit区切りを末尾(=プリアンブル終端)基準で付け直す。 */
     private fun regroupFromEnd() {
@@ -115,10 +134,17 @@ class ReceiverViewModel : ViewModel() {
     }
 
     private fun endLine(note: String) {
-        bitLines.add("$curBits $note")
+        bitLines.add("${currentLine()} $note")
         if (bitLines.size > 40) bitLines.removeAt(0)
+        clearCurrent()
+    }
+
+    private fun clearCurrent() {
         curBits.clear()
         curCount = 0
+        inFrame = false
+        hexTokens.clear()
+        partial.clear()
     }
 
     /** 解析スレッドから呼ばれる。 */
@@ -138,7 +164,7 @@ class ReceiverViewModel : ViewModel() {
                 decoderState = decoder.state,
                 log = log.toList(),
                 bitLines = bitLines.toList(),
-                currentBits = curBits.toString(),
+                currentBits = currentLine(),
             )
         }
     }
@@ -146,18 +172,14 @@ class ReceiverViewModel : ViewModel() {
     fun resetSignal() {
         slicer.reset()
         decoder.reset()
-        synchronized(log) {
-            curBits.clear()
-            curCount = 0
-        }
+        synchronized(log) { clearCurrent() }
     }
 
     fun clearLog() {
         synchronized(log) {
             log.clear()
             bitLines.clear()
-            curBits.clear()
-            curCount = 0
+            clearCurrent()
         }
         publish()
     }

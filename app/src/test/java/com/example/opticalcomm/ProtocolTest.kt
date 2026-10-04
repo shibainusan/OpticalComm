@@ -30,6 +30,14 @@ class ProtocolTest {
     }
 
     @Test
+    fun lastByteExposesEachDecodedSymbol() {
+        val d = BitStreamDecoder()
+        val bytes = Frame.encode("Hi").mapNotNull { b -> d.push(b); d.lastByte.takeIf { it >= 0 } }
+        val body = byteArrayOf(2, 'H'.code.toByte(), 'i'.code.toByte())
+        assertEquals(listOf(2, 'H'.code, 'i'.code, Crc8.compute(body)), bytes)
+    }
+
+    @Test
     fun reportsCrcNg() {
         val ev = decodeAllEvents(Frame.encode("hello", crcCorruption = 1))
         assertEquals(DecodeEvent.PreambleOk, ev.first())

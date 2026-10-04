@@ -82,6 +82,10 @@ class BitStreamDecoder {
     var active = false
         private set
 
+    /** 直近の push で 10bit シンボルを復号できたらそのバイト値、そうでなければ -1。 */
+    var lastByte = -1
+        private set
+
     private var zeroRun = ARM_ZEROS
     private var huntBits = 0
     private var window = 0
@@ -110,6 +114,7 @@ class BitStreamDecoder {
     }
 
     fun push(bit: Boolean): DecodeEvent? {
+        lastByte = -1
         val v = if (bit) 1 else 0
         if (state == DecoderState.HUNT) {
             // 点灯検出より前のビットも含めて常に窓へ入れる
@@ -154,6 +159,7 @@ class BitStreamDecoder {
         }
         rd = sym.rdAfter
         val byte = sym.byte
+        lastByte = byte
         when (state) {
             DecoderState.LENGTH -> {
                 if (byte > MAX_PAYLOAD_BYTES) {
