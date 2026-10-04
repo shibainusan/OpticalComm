@@ -1,4 +1,4 @@
-package com.example.opticalcomm
+package net.denpa.opticalcomm
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel

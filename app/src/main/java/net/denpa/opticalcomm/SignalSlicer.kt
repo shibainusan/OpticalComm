@@ -1,4 +1,4 @@
-package com.example.opticalcomm
+package net.denpa.opticalcomm
 
 /**
  * 輝度サンプル列(タイムスタンプ付き)を2値化し、エッジに再同期しながら

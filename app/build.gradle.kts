@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.opticalcomm"
+    namespace = "net.denpa.opticalcomm"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.opticalcomm"
+        applicationId = "net.denpa.opticalcomm"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

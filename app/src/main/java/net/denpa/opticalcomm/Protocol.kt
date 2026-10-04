@@ -1,4 +1,4 @@
-package com.example.opticalcomm
+package net.denpa.opticalcomm
 
 /** 1ビットあたりの時間。端末のトーチ応答とカメラ30fpsに余裕を持たせた値。 */
 const val BIT_MS = 70L

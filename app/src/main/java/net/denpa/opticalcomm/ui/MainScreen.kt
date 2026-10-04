@@ -1,4 +1,4 @@
-package com.example.opticalcomm.ui
+package net.denpa.opticalcomm.ui
 
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
@@ -39,10 +39,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.opticalcomm.LightReceiver
-import com.example.opticalcomm.MAX_PAYLOAD_BYTES
-import com.example.opticalcomm.ReceiverViewModel
-import com.example.opticalcomm.SenderViewModel
+import net.denpa.opticalcomm.LightReceiver
+import net.denpa.opticalcomm.MAX_PAYLOAD_BYTES
+import net.denpa.opticalcomm.ReceiverViewModel
+import net.denpa.opticalcomm.SenderViewModel
 
 @Composable
 fun MainScreen(cameraGranted: Boolean, requestCamera: () -> Unit) {

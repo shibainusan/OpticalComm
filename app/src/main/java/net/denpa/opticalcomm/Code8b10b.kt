@@ -1,4 +1,4 @@
-package com.example.opticalcomm
+package net.denpa.opticalcomm
 
 /**
  * 8b/10b ラインコード(Widmer-Franaszek)。データ D.x.y と、同期用のカンマ K28.5 のみ対応。
