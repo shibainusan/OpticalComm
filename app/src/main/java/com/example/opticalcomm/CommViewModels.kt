@@ -58,7 +58,7 @@ data class ReceiverUiState(
     val level: Boolean = false,
     val decoderState: DecoderState = DecoderState.HUNT,
     val log: List<String> = emptyList(),
-    /** 受信ビット(8bit区切り)と判定結果の注釈。確定済みの行。 */
+    /** 受信ビット(10bit=1シンボル区切り)と判定結果の注釈。確定済みの行。 */
     val bitLines: List<String> = emptyList(),
     /** 受信中でまだ注釈が付いていない行。 */
     val currentBits: String = "",
@@ -78,12 +78,16 @@ class ReceiverViewModel : ViewModel() {
         val ev = decoder.push(bit)
         synchronized(log) {
             if (decoder.active || ev != null) {
-                if (curCount > 0 && curCount % 8 == 0) curBits.append(' ')
+                if (curCount > 0 && curCount % 10 == 0) curBits.append(' ')
                 curBits.append(if (bit) '1' else '0')
                 curCount++
             }
             when (ev) {
-                DecodeEvent.PreambleOk -> endLine("←プリアンブル受信成功")
+                DecodeEvent.PreambleOk -> {
+                    regroupFromEnd()
+                    endLine("←プリアンブル受信成功")
+                }
+                is DecodeEvent.SymbolError -> endLine("←8b/10b不正(${ev.reason})")
                 is DecodeEvent.PreambleFail -> endLine("←プリアンブル失敗(${ev.reason})")
                 is DecodeEvent.Message -> {
                     endLine("←CRC OK")
@@ -95,6 +99,18 @@ class ReceiverViewModel : ViewModel() {
                 }
                 null -> Unit
             }
+        }
+    }
+
+    /** 点灯検出前の先頭ビットが欠けるため、10bit区切りを末尾(=プリアンブル終端)基準で付け直す。 */
+    private fun regroupFromEnd() {
+        val raw = curBits.toString().replace(" ", "")
+        curBits.clear()
+        val head = raw.length % 10
+        if (head > 0) curBits.append(raw, 0, head)
+        for (i in head until raw.length step 10) {
+            if (curBits.isNotEmpty()) curBits.append(' ')
+            curBits.append(raw, i, i + 10)
         }
     }
 
