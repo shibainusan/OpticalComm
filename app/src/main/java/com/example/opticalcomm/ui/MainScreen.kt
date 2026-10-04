@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -108,8 +109,14 @@ private fun ReceiveTab(vm: ReceiverViewModel = viewModel()) {
         onDispose { receiver.stop() }
     }
 
+    val bitScroll = rememberScrollState()
+    // 末尾付近を見ているときだけ、新しいビットに追従して最下部へスクロールする
+    LaunchedEffect(s.bitLines.size, s.currentBits.length) {
+        if (bitScroll.maxValue - bitScroll.value < 200) bitScroll.scrollTo(bitScroll.maxValue)
+    }
+
     Column(
-        Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+        Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxWidth().height(200.dp))
@@ -136,11 +143,15 @@ private fun ReceiveTab(vm: ReceiverViewModel = viewModel()) {
             }
         }
         Text("受信ビット", style = MaterialTheme.typography.labelLarge)
-        s.bitLines.forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
-        if (s.currentBits.isNotEmpty()) {
-            Text(s.currentBits, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(bitScroll)) {
+            s.bitLines.forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+            if (s.currentBits.isNotEmpty()) {
+                Text(s.currentBits, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            }
         }
         Text("受信メッセージ", style = MaterialTheme.typography.labelLarge)
-        s.log.asReversed().forEach { Text(it) }
+        Column(Modifier.fillMaxWidth().height(96.dp).verticalScroll(rememberScrollState())) {
+            s.log.asReversed().forEach { Text(it) }
+        }
     }
 }
