@@ -25,7 +25,6 @@ class LightReceiver(private val context: Context) {
     private var executor: ExecutorService? = null
     private var camera: Camera? = null
     private var stopped = false
-    private val hist = IntArray(256)
 
     fun start(
         owner: LifecycleOwner,
@@ -81,36 +80,25 @@ class LightReceiver(private val context: Context) {
         )
     }
 
-    /** 中央ROIの輝度上位1%の平均。小さなLEDでも平均に埋もれにくい。 */
+    /**
+     * 画面全体の平均輝度。トーチが映るか周囲を照らす分だけ平均が動く。
+     * 上位1%などのピーク指標は、白飛びした照明が常時最大値になり変化を拾えない。
+     */
     private fun brightness(image: ImageProxy): Float {
         val plane = image.planes[0]
         val buf = plane.buffer
         val rowStride = plane.rowStride
         val w = image.width
         val h = image.height
-        hist.fill(0)
+        var sum = 0L
         var n = 0
-        val x0 = w / 4
-        val x1 = w * 3 / 4
-        val y0 = h / 4
-        val y1 = h * 3 / 4
-        for (y in y0 until y1 step 2) {
+        for (y in 0 until h step 2) {
             val base = y * rowStride
-            for (x in x0 until x1 step 2) {
-                hist[buf.get(base + x).toInt() and 0xFF]++
+            for (x in 0 until w step 2) {
+                sum += buf.get(base + x).toInt() and 0xFF
                 n++
             }
         }
-        val take = maxOf(1, n / 100)
-        var left = take
-        var sum = 0L
-        var v = 255
-        while (v >= 0 && left > 0) {
-            val c = minOf(hist[v], left)
-            sum += c.toLong() * v
-            left -= c
-            v--
-        }
-        return sum.toFloat() / take
+        return sum.toFloat() / n
     }
 }

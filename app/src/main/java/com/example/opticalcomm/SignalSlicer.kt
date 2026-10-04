@@ -6,7 +6,7 @@ package com.example.opticalcomm
  */
 class SignalSlicer(
     private val bitNanos: Long = BIT_MS * 1_000_000L,
-    private val minContrast: Float = 25f,
+    private val minContrast: Float = 6f,
     private val onBit: (Boolean) -> Unit,
 ) {
     var hi = 0f

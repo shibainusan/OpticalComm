@@ -93,7 +93,9 @@ private fun ReceiveTab(vm: ReceiverViewModel = viewModel()) {
     val owner = LocalLifecycleOwner.current
     var front by rememberSaveable { mutableStateOf(false) }
     val receiver = remember { LightReceiver(context) }
-    val previewView = remember { PreviewView(context) }
+    val previewView = remember {
+        PreviewView(context).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE }
+    }
 
     DisposableEffect(front) {
         vm.resetSignal()
@@ -111,7 +113,9 @@ private fun ReceiveTab(vm: ReceiverViewModel = viewModel()) {
         Canvas(Modifier.fillMaxWidth().height(80.dp)) {
             val n = s.samples.size
             if (n > 1) {
-                fun y(v: Float) = size.height * (1f - v / 255f)
+                val vMin = minOf(s.samples.min(), s.threshold)
+                val vMax = maxOf(s.samples.max(), s.threshold, vMin + 10f)
+                fun y(v: Float) = size.height * (1f - (v - vMin) / (vMax - vMin))
                 for (i in 1 until n) {
                     drawLine(
                         Color(0xFF1976D2),
