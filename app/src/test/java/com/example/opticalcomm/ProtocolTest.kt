@@ -6,9 +6,36 @@ import org.junit.Test
 import kotlin.random.Random
 
 class ProtocolTest {
-    private fun decodeAll(bits: List<Boolean>): List<DecodeEvent> {
+    private fun decodeAllEvents(bits: List<Boolean>): List<DecodeEvent> {
         val d = BitStreamDecoder()
         return bits.mapNotNull { d.push(it) }
+    }
+
+    /** メッセージ/CRCエラーのみ(プリアンブル通知は除く)。 */
+    private fun decodeAll(bits: List<Boolean>) =
+        decodeAllEvents(bits).filter { it is DecodeEvent.Message || it is DecodeEvent.CrcError }
+
+    @Test
+    fun reportsPreambleOkThenCrcOk() {
+        val ev = decodeAllEvents(Frame.encode("Hi"))
+        assertEquals(listOf(DecodeEvent.PreambleOk, DecodeEvent.Message("Hi")), ev)
+    }
+
+    @Test
+    fun reportsPreambleFailForNoise() {
+        val noise = List(10) { false } + List(60) { it % 3 != 0 }
+        val ev = decodeAllEvents(noise)
+        assertTrue(ev.any { it is DecodeEvent.PreambleFail })
+        assertTrue(ev.none { it is DecodeEvent.PreambleOk })
+    }
+
+    @Test
+    fun reportsCrcNg() {
+        val bits = Frame.encode("hello").toMutableList()
+        bits[bits.size - 1] = !bits[bits.size - 1]
+        val ev = decodeAllEvents(bits)
+        assertEquals(DecodeEvent.PreambleOk, ev.first())
+        assertTrue(ev.last() is DecodeEvent.CrcError)
     }
 
     @Test
@@ -40,7 +67,9 @@ class ProtocolTest {
         val bitNs = BIT_MS * 1_000_000L
         val events = ArrayList<DecodeEvent>()
         val dec = BitStreamDecoder()
-        val slicer = SignalSlicer { b -> dec.push(b)?.let { events.add(it) } }
+        val slicer = SignalSlicer { b ->
+            dec.push(b)?.let { if (it is DecodeEvent.Message || it is DecodeEvent.CrcError) events.add(it) }
+        }
         val leadNs = 1_000_000_000L
         val totalNs = leadNs + (bits.size * bitNs * bitScale).toLong() + 1_500_000_000L
         var t = 0L

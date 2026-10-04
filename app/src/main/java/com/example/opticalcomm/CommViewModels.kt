@@ -58,26 +58,51 @@ data class ReceiverUiState(
     val level: Boolean = false,
     val decoderState: DecoderState = DecoderState.HUNT,
     val log: List<String> = emptyList(),
+    /** 受信ビット(8bit区切り)と判定結果の注釈。確定済みの行。 */
+    val bitLines: List<String> = emptyList(),
+    /** 受信中でまだ注釈が付いていない行。 */
+    val currentBits: String = "",
 )
 
 class ReceiverViewModel : ViewModel() {
     private val decoder = BitStreamDecoder()
     private val log = ArrayList<String>()
+    private val bitLines = ArrayList<String>()
+    private val curBits = StringBuilder()
+    private var curCount = 0
     private val _state = MutableStateFlow(ReceiverUiState())
     val state: StateFlow<ReceiverUiState> = _state
     private val window = ArrayDeque<Float>()
 
     private val slicer = SignalSlicer { bit ->
-        decoder.push(bit)?.let { ev ->
-            synchronized(log) {
-                log.add(
-                    when (ev) {
-                        is DecodeEvent.Message -> "受信: ${ev.text}"
-                        is DecodeEvent.CrcError -> "CRCエラー(len=${ev.length})"
-                    }
-                )
+        val ev = decoder.push(bit)
+        synchronized(log) {
+            if (decoder.active || ev != null) {
+                if (curCount > 0 && curCount % 8 == 0) curBits.append(' ')
+                curBits.append(if (bit) '1' else '0')
+                curCount++
+            }
+            when (ev) {
+                DecodeEvent.PreambleOk -> endLine("←プリアンブル受信成功")
+                is DecodeEvent.PreambleFail -> endLine("←プリアンブル失敗(${ev.reason})")
+                is DecodeEvent.Message -> {
+                    endLine("←CRC OK")
+                    log.add("受信: ${ev.text}")
+                }
+                is DecodeEvent.CrcError -> {
+                    endLine("←CRC NG(len=${ev.length})")
+                    log.add("CRCエラー(len=${ev.length})")
+                }
+                null -> Unit
             }
         }
+    }
+
+    private fun endLine(note: String) {
+        bitLines.add("$curBits $note")
+        if (bitLines.size > 40) bitLines.removeAt(0)
+        curBits.clear()
+        curCount = 0
     }
 
     /** 解析スレッドから呼ばれる。 */
@@ -85,22 +110,39 @@ class ReceiverViewModel : ViewModel() {
         slicer.push(t, lum)
         window.addLast(lum)
         if (window.size > 150) window.removeFirst()
-        _state.value = ReceiverUiState(
-            samples = window.toList(),
-            threshold = slicer.threshold,
-            level = slicer.level,
-            decoderState = decoder.state,
-            log = synchronized(log) { log.toList() },
-        )
+        publish()
+    }
+
+    private fun publish() {
+        synchronized(log) {
+            _state.value = ReceiverUiState(
+                samples = window.toList(),
+                threshold = slicer.threshold,
+                level = slicer.level,
+                decoderState = decoder.state,
+                log = log.toList(),
+                bitLines = bitLines.toList(),
+                currentBits = curBits.toString(),
+            )
+        }
     }
 
     fun resetSignal() {
         slicer.reset()
         decoder.reset()
+        synchronized(log) {
+            curBits.clear()
+            curCount = 0
+        }
     }
 
     fun clearLog() {
-        synchronized(log) { log.clear() }
-        _state.update { it.copy(log = emptyList()) }
+        synchronized(log) {
+            log.clear()
+            bitLines.clear()
+            curBits.clear()
+            curCount = 0
+        }
+        publish()
     }
 }

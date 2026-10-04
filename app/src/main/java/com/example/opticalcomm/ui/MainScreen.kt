@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Tab
@@ -28,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -103,7 +108,10 @@ private fun ReceiveTab(vm: ReceiverViewModel = viewModel()) {
         onDispose { receiver.stop() }
     }
 
-    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxWidth().height(200.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { front = !front }) { Text(if (front) "前面カメラ" else "背面カメラ") }
@@ -127,6 +135,12 @@ private fun ReceiveTab(vm: ReceiverViewModel = viewModel()) {
                 drawLine(Color.Red, Offset(0f, y(s.threshold)), Offset(size.width, y(s.threshold)), strokeWidth = 2f)
             }
         }
+        Text("受信ビット", style = MaterialTheme.typography.labelLarge)
+        s.bitLines.forEach { Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+        if (s.currentBits.isNotEmpty()) {
+            Text(s.currentBits, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        }
+        Text("受信メッセージ", style = MaterialTheme.typography.labelLarge)
         s.log.asReversed().forEach { Text(it) }
     }
 }

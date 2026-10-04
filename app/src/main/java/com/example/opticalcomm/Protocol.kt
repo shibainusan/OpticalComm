@@ -41,25 +41,47 @@ object Frame {
 }
 
 sealed interface DecodeEvent {
+    /** プリアンブル+SYNC を検出した。 */
+    data object PreambleOk : DecodeEvent
+    data class PreambleFail(val reason: String) : DecodeEvent
+    /** CRC が一致した場合のみ。 */
     data class Message(val text: String) : DecodeEvent
     data class CrcError(val length: Int) : DecodeEvent
 }
 
 enum class DecoderState { HUNT, LENGTH, PAYLOAD, CRC }
 
+/** 消灯がこの bit 数続いた後の最初の点灯を、フレーム開始候補とみなす。 */
+private const val ARM_ZEROS = 8
+
+/** 点灯を検出してからこの bit 数以内にプリアンブル+SYNC (24bit) が揃わなければ失敗とする。 */
+private const val HUNT_LIMIT_BITS = 48
+
 /** ビット列を1つずつ受け取り、プリアンブル+SYNC検出→LEN→PAYLOAD→CRCの順に復号する。 */
 class BitStreamDecoder {
     var state = DecoderState.HUNT
         private set
 
+    /** 点灯を検出してプリアンブルを探している間、または復号中は true。UI でビット表示するかの判断に使う。 */
+    var active = false
+        private set
+
+    private var zeroRun = ARM_ZEROS
+    private var huntBits = 0
     private var window = 0
     private var cur = 0
     private var curBits = 0
     private var length = 0
     private val payload = java.io.ByteArrayOutputStream()
 
-    fun reset() {
+    /** フレーム終了後など。次の点灯をすぐ候補にできる。 */
+    fun reset() = resetTo(rearmed = true)
+
+    private fun resetTo(rearmed: Boolean) {
         state = DecoderState.HUNT
+        active = false
+        zeroRun = if (rearmed) ARM_ZEROS else 0
+        huntBits = 0
         window = 0
         cur = 0
         curBits = 0
@@ -69,12 +91,31 @@ class BitStreamDecoder {
     fun push(bit: Boolean): DecodeEvent? {
         val v = if (bit) 1 else 0
         if (state == DecoderState.HUNT) {
+            if (!active) {
+                if (!bit) {
+                    zeroRun++
+                    return null
+                }
+                if (zeroRun < ARM_ZEROS) {
+                    zeroRun = 0
+                    return null
+                }
+                active = true
+                huntBits = 0
+                window = 0
+            }
+            huntBits++
             window = ((window shl 1) or v) and 0xFFFF
             if (window == (PREAMBLE_BYTE shl 8 or SYNC_BYTE)) {
                 state = DecoderState.LENGTH
                 cur = 0
                 curBits = 0
                 payload.reset()
+                return DecodeEvent.PreambleOk
+            }
+            if (huntBits >= HUNT_LIMIT_BITS) {
+                resetTo(rearmed = false)
+                return DecodeEvent.PreambleFail("SYNC(AA AA 7E)が見つからない")
             }
             return null
         }
@@ -86,11 +127,11 @@ class BitStreamDecoder {
         when (state) {
             DecoderState.LENGTH -> {
                 if (byte > MAX_PAYLOAD_BYTES) {
-                    reset()
-                } else {
-                    length = byte
-                    state = if (length == 0) DecoderState.CRC else DecoderState.PAYLOAD
+                    resetTo(rearmed = false)
+                    return DecodeEvent.PreambleFail("長さ不正($byte)")
                 }
+                length = byte
+                state = if (length == 0) DecoderState.CRC else DecoderState.PAYLOAD
             }
             DecoderState.PAYLOAD -> {
                 payload.write(byte)
@@ -99,9 +140,10 @@ class BitStreamDecoder {
             DecoderState.CRC -> {
                 val data = payload.toByteArray()
                 val crc = Crc8.compute(byteArrayOf(length.toByte()) + data)
+                val len = length
                 reset()
                 return if (crc == byte) DecodeEvent.Message(String(data, Charsets.UTF_8))
-                else DecodeEvent.CrcError(length)
+                else DecodeEvent.CrcError(len)
             }
             DecoderState.HUNT -> Unit
         }
