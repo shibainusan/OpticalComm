@@ -80,11 +80,18 @@ class ProtocolTest {
         }
         val leadNs = 1_000_000_000L
         val totalNs = leadNs + (bits.size * bitNs * bitScale).toLong() + 1_500_000_000L
+        val bitNsScaled = bitNs * bitScale
+        fun on(x: Long): Boolean {
+            val i = ((x - leadNs) / bitNsScaled).toLong()
+            return x >= leadNs && i >= 0 && i < bits.size && bits[i.toInt()]
+        }
+        // 実カメラ同様、各フレームの輝度は露光時間(20ms)中のトーチ点灯割合に比例する
+        val exposureNs = 20_000_000L
+        val sub = 20
         var t = 0L
         while (t < totalNs) {
-            val i = ((t - leadNs) / (bitNs * bitScale)).toLong()
-            val on = t >= leadNs && i < bits.size && bits[i.toInt()]
-            val lum = (if (on) 220f else 40f) + (rnd.nextFloat() - 0.5f) * 20f
+            val frac = (0 until sub).count { on(t + exposureNs * it / sub) }.toFloat() / sub
+            val lum = 40f + 180f * frac + (rnd.nextFloat() - 0.5f) * 20f
             slicer.push(t, lum)
             t += 33_333_333L + rnd.nextLong(-4_000_000L, 4_000_000L)
         }

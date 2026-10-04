@@ -19,6 +19,7 @@ class SignalSlicer(
 
     private var initialized = false
     private var prevT = 0L
+    private var prevLum = 0f
     private var synced = false
     private var nextCenter = 0L
 
@@ -30,7 +31,7 @@ class SignalSlicer(
 
     fun push(t: Long, lum: Float) {
         if (!initialized) {
-            hi = lum; lo = lum; prevT = t; initialized = true
+            hi = lum; lo = lum; prevT = t; prevLum = lum; initialized = true
             return
         }
         // ピーク追従(ゆっくり減衰)
@@ -49,13 +50,17 @@ class SignalSlicer(
         }
 
         if (newLevel != level) {
-            val edge = (prevT + t) / 2
+            // 露光中のトーチ点灯割合が輝度に現れるので、しきい値を横切る位置を線形補間して
+            // フレーム間隔より細かくエッジ時刻を推定する(単純な中点だとフレーム間隔の半分の誤差が出る)
+            val frac = if (lum != prevLum) ((threshold - prevLum) / (lum - prevLum)).coerceIn(0f, 1f) else 0.5f
+            val edge = prevT + ((t - prevT) * frac).toLong()
             if (synced) emitUntil(edge) else if (newLevel) synced = true
             level = newLevel
             if (synced) nextCenter = edge + bitNanos / 2
         }
         if (synced) emitUntil(t)
         prevT = t
+        prevLum = lum
     }
 
     private fun emitUntil(limit: Long) {
