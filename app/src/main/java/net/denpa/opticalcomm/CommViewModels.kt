@@ -58,7 +58,7 @@ data class ReceiverUiState(
     val level: Boolean = false,
     val decoderState: DecoderState = DecoderState.HUNT,
     val log: List<String> = emptyList(),
-    /** 受信ビット(10bit=1シンボル区切り)と判定結果の注釈。確定済みの行。 */
+    /** 受信ビット(8bit区切り)と判定結果の注釈。確定済みの行。 */
     val bitLines: List<String> = emptyList(),
     /** 受信中でまだ注釈が付いていない行。 */
     val currentBits: String = "",
@@ -71,7 +71,7 @@ class ReceiverViewModel : ViewModel() {
     private val curBits = StringBuilder()
     private var curCount = 0
 
-    /** プリアンブル受信後は 10bit 復号済みのバイトを HEX トークンにして表示する。 */
+    /** プリアンブル受信後は 8bit ごとのバイトを HEX トークンにして表示する。 */
     private var inFrame = false
     private val hexTokens = ArrayList<String>()
     private val partial = StringBuilder()
@@ -89,12 +89,9 @@ class ReceiverViewModel : ViewModel() {
                     if (decoder.lastByte >= 0) {
                         hexTokens.add("0x%02X".format(decoder.lastByte))
                         partial.clear()
-                    } else if (decoder.lastSymbolError) {
-                        hexTokens.add("[$partial]")
-                        partial.clear()
                     }
                 } else {
-                    if (curCount > 0 && curCount % 10 == 0) curBits.append(' ')
+                    if (curCount > 0 && curCount % 8 == 0) curBits.append(' ')
                     curBits.append(if (bit) '1' else '0')
                     curCount++
                 }
@@ -106,14 +103,12 @@ class ReceiverViewModel : ViewModel() {
                     inFrame = true
                 }
                 is DecodeEvent.PreambleFail -> endLine("←プリアンブル失敗(${ev.reason})")
-                is DecodeEvent.SymbolError -> endLine("←8b/10b不正(${ev.reason})")
                 is DecodeEvent.Message -> {
                     endLine("←CRC OK")
                     log.add("受信: ${ev.text}")
                 }
                 is DecodeEvent.CrcError -> {
-                    val why = if (ev.symbolErrors > 0) "符号エラー${ev.symbolErrors}個" else "CRC不一致"
-                    endLine("←NG(len=${ev.length}, $why)")
+                    endLine("←NG(len=${ev.length}, CRC不一致)")
                     log.add("受信(エラー): ${ev.text}")
                 }
                 null -> Unit
@@ -125,15 +120,15 @@ class ReceiverViewModel : ViewModel() {
         if (inFrame) (hexTokens + listOfNotNull(partial.takeIf { it.isNotEmpty() }?.toString())).joinToString(" ")
         else curBits.toString()
 
-    /** 点灯検出前の先頭ビットが欠けるため、10bit区切りを末尾(=プリアンブル終端)基準で付け直す。 */
+    /** 点灯検出前の先頭ビットが欠けるため、8bit区切りを末尾(=プリアンブル終端)基準で付け直す。 */
     private fun regroupFromEnd() {
         val raw = curBits.toString().replace(" ", "")
         curBits.clear()
-        val head = raw.length % 10
+        val head = raw.length % 8
         if (head > 0) curBits.append(raw, 0, head)
-        for (i in head until raw.length step 10) {
+        for (i in head until raw.length step 8) {
             if (curBits.isNotEmpty()) curBits.append(' ')
-            curBits.append(raw, i, i + 10)
+            curBits.append(raw, i, i + 8)
         }
     }
 

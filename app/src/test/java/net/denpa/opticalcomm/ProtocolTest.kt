@@ -38,16 +38,12 @@ class ProtocolTest {
     }
 
     @Test
-    fun keepsReceivingLengthBytesAfterSymbolError() {
+    fun keepsReceivingAfterCorruptedPayload() {
         val bits = Frame.encode("hello").toMutableList()
-        // 本文1文字目のシンボル(bit 30..39)を無効符号にする
-        for (i in 30..39) bits[i] = true
+        // 本文1文字目('h')の最下位ビット(bit 24+8+7)を反転
+        bits[39] = !bits[39]
         val ev = decodeAllEvents(bits).last()
-        assertTrue(ev is DecodeEvent.CrcError)
-        ev as DecodeEvent.CrcError
-        assertEquals(5, ev.length)
-        assertEquals(1, ev.symbolErrors)
-        assertEquals("\uFFFDello", ev.text)
+        assertEquals(DecodeEvent.CrcError(5, "iello"), ev)
     }
 
     @Test
@@ -58,12 +54,12 @@ class ProtocolTest {
     }
 
     @Test
-    fun reportsSymbolErrorOnInvalidCode() {
+    fun reportsPreambleFailOnInvalidLength() {
         val bits = Frame.encode("hello").toMutableList()
-        // LEN シンボル(bit 20..29)を全て 1 にして無効符号にする
-        for (i in 20..29) bits[i] = true
+        // LEN(bit 24..31)の最上位ビットを立てて 64 超にする
+        bits[24] = true
         val ev = decodeAllEvents(bits)
-        assertTrue(ev.any { it is DecodeEvent.SymbolError })
+        assertTrue(ev.any { it is DecodeEvent.PreambleFail })
         assertTrue(ev.none { it is DecodeEvent.Message })
     }
 
@@ -84,7 +80,7 @@ class ProtocolTest {
     @Test
     fun detectsCorruption() {
         val bits = Frame.encode("hello").toMutableList()
-        bits[30] = !bits[30]
+        bits[40] = !bits[40]
         val ev = decodeAll(bits)
         assertTrue(ev.none { it is DecodeEvent.Message })
     }
@@ -130,73 +126,5 @@ class ProtocolTest {
                 )
             }
         }
-    }
-
-    // ---- 8b/10b ----
-
-    @Test
-    fun knownCodes() {
-        assertEquals("1001110100", Code8b10b.encodeData(0x00, false).bits)   // D0.0 RD-
-        assertEquals("0110001011", Code8b10b.encodeData(0x00, true).bits)    // D0.0 RD+
-        assertEquals("1010101010", Code8b10b.encodeData(0xB5, false).bits)   // D21.5
-        assertEquals("0011111010", Code8b10b.encodeComma(false).bits)        // K28.5 RD-
-        assertEquals("1100000101", Code8b10b.encodeComma(true).bits)         // K28.5 RD+
-        assertEquals("00111110101100000101", Code8b10b.PREAMBLE)
-    }
-
-    @Test
-    fun allCodesAreBalancedAndRunLimited() {
-        for (rd0 in listOf(false, true)) {
-            for (b in 0..255) {
-                val sym = Code8b10b.encodeData(b, rd0)
-                assertEquals(10, sym.bits.length)
-                val disparity = sym.bits.count { it == '1' } * 2 - 10
-                assertTrue("byte=$b disparity=$disparity", disparity == 0 || disparity == 2 || disparity == -2)
-                // RD- からは + 側 or 0、RD+ からは - 側 or 0 の符号のみ
-                if (disparity != 0) assertEquals(disparity > 0, sym.rdAfter)
-                if (disparity == 0) assertEquals(rd0, sym.rdAfter)
-                if (disparity > 0) assertTrue(!rd0)
-                if (disparity < 0) assertTrue(rd0)
-            }
-        }
-    }
-
-    @Test
-    fun runLengthAtMostFiveAndDcBalanced() {
-        val rnd = Random(7)
-        repeat(200) {
-            val text = String(CharArray(rnd.nextInt(0, 20)) { ('a'.code + rnd.nextInt(26)).toChar() })
-            val bits = Frame.encode(text)
-            var run = 1
-            var maxRun = 1
-            for (i in 1 until bits.size) {
-                run = if (bits[i] == bits[i - 1]) run + 1 else 1
-                maxRun = maxOf(maxRun, run)
-            }
-            assertTrue("maxRun=$maxRun text=$text", maxRun <= 5)
-            // 全シンボル後の累積ディスパリティは 0 または ±2
-            val total = bits.count { it } * 2 - bits.size
-            assertTrue("total=$total", total in -2..2)
-        }
-    }
-
-    @Test
-    fun everyByteRoundTripsThroughDecoder() {
-        var rd = false
-        for (round in 0..1) {
-            for (b in 0..255) {
-                val sym = Code8b10b.encodeData(b, rd)
-                val d = Code8b10b.decode(sym.bits, rd)
-                assertEquals(Code8b10b.Decoded.Data(b, sym.rdAfter), d)
-                rd = sym.rdAfter
-            }
-        }
-    }
-
-    @Test
-    fun wrongRunningDisparityIsRejected() {
-        // D0.0 RD- 用の符号を RD+ で受けると違反
-        val code = Code8b10b.encodeData(0, false).bits
-        assertTrue(Code8b10b.decode(code, true) is Code8b10b.Decoded.Error)
     }
 }
