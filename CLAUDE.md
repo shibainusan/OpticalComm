@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Overview
-Android app (Kotlin, Jetpack Compose, CameraX) that sends text between two phones by blinking the camera torch (sender) and reading brightness changes with the camera (receiver). One APK has both "送信" and "受信" tabs. Package: `com.example.opticalcomm`.
+Android app (Kotlin, Jetpack Compose, CameraX) that sends text between two phones by blinking the camera torch (sender) and reading brightness changes with the camera (receiver). One APK has both "送信" and "受信" tabs. Package / applicationId: `net.denpa.opticalcomm`.
 
 ## Commands
 Run from the repo root (Gradle Kotlin DSL, version catalog in `gradle/libs.versions.toml`):
