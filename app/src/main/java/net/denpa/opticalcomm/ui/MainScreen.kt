@@ -48,8 +48,8 @@ import net.denpa.opticalcomm.SenderViewModel
 @Composable
 fun MainScreen(cameraGranted: Boolean, requestCamera: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (!cameraGranted) {
             Text("カメラ権限が必要です")
@@ -67,7 +67,7 @@ fun MainScreen(cameraGranted: Boolean, requestCamera: () -> Unit) {
 @Composable
 private fun SendSection(vm: SenderViewModel, s: SenderUiState) {
     var text by rememberSaveable { mutableStateOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         OutlinedTextField(
             value = text,
             onValueChange = { text = it },
@@ -123,7 +123,7 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
         if (bitScroll.maxValue - bitScroll.value < 200) bitScroll.scrollTo(bitScroll.maxValue)
     }
 
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         AndroidView(factory = { previewView }, modifier = Modifier.fillMaxWidth().height(140.dp).clipToBounds())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { front = !front }) { Text(if (front) "前面カメラ" else "背面カメラ") }
