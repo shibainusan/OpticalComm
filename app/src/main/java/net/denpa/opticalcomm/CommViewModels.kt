@@ -64,12 +64,15 @@ data class ReceiverUiState(
     val currentBits: String = "",
 )
 
+private const val HUNT_RING_BITS = 40
+
 class ReceiverViewModel : ViewModel() {
     private val decoder = BitStreamDecoder()
     private val log = ArrayList<String>()
     private val bitLines = ArrayList<String>()
-    private val curBits = StringBuilder()
-    private var curCount = 0
+
+    /** HUNT 中は直近 [HUNT_RING_BITS] ビットを常に流し込み、プリアンブル検出まで同じ行を更新し続ける。 */
+    private val ring = StringBuilder()
 
     /** プリアンブル受信後は 8bit ごとのバイトを HEX トークンにして表示する。 */
     private var inFrame = false
@@ -83,26 +86,23 @@ class ReceiverViewModel : ViewModel() {
     private val slicer = SignalSlicer { bit ->
         val ev = decoder.push(bit)
         synchronized(log) {
-            if (decoder.active || ev != null) {
-                if (inFrame) {
-                    partial.append(if (bit) '1' else '0')
-                    if (decoder.lastByte >= 0) {
-                        hexTokens.add("0x%02X".format(decoder.lastByte))
-                        partial.clear()
-                    }
-                } else {
-                    if (curCount > 0 && curCount % 8 == 0) curBits.append(' ')
-                    curBits.append(if (bit) '1' else '0')
-                    curCount++
+            if (inFrame) {
+                partial.append(if (bit) '1' else '0')
+                if (decoder.lastByte >= 0) {
+                    hexTokens.add("0x%02X".format(decoder.lastByte))
+                    partial.clear()
                 }
+            } else {
+                ring.append(if (bit) '1' else '0')
+                if (ring.length > HUNT_RING_BITS) ring.deleteCharAt(0)
             }
             when (ev) {
                 DecodeEvent.PreambleOk -> {
-                    regroupFromEnd()
                     endLine("←プリアンブル受信成功")
                     inFrame = true
                 }
-                is DecodeEvent.PreambleFail -> endLine("←プリアンブル失敗(${ev.reason})")
+                // 同期前の失敗は行を確定させず、リングの更新を続ける。フレーム中(LEN不正)だけ行を閉じる
+                is DecodeEvent.PreambleFail -> if (inFrame) endLine("←失敗(${ev.reason})")
                 is DecodeEvent.Message -> {
                     endLine("←CRC OK")
                     log.add("受信: ${ev.text}")
@@ -118,18 +118,18 @@ class ReceiverViewModel : ViewModel() {
 
     private fun currentLine(): String =
         if (inFrame) (hexTokens + listOfNotNull(partial.takeIf { it.isNotEmpty() }?.toString())).joinToString(" ")
-        else curBits.toString()
+        else groupFromEnd(ring)
 
-    /** 点灯検出前の先頭ビットが欠けるため、8bit区切りを末尾(=プリアンブル終端)基準で付け直す。 */
-    private fun regroupFromEnd() {
-        val raw = curBits.toString().replace(" ", "")
-        curBits.clear()
+    /** 最新ビット(末尾)を基準に8bit区切りにする。リングが流れても区切り位置が末尾に揃う。 */
+    private fun groupFromEnd(raw: CharSequence): String {
+        val sb = StringBuilder()
         val head = raw.length % 8
-        if (head > 0) curBits.append(raw, 0, head)
+        if (head > 0) sb.append(raw, 0, head)
         for (i in head until raw.length step 8) {
-            if (curBits.isNotEmpty()) curBits.append(' ')
-            curBits.append(raw, i, i + 8)
+            if (sb.isNotEmpty()) sb.append(' ')
+            sb.append(raw, i, i + 8)
         }
+        return sb.toString()
     }
 
     private fun endLine(note: String) {
@@ -139,8 +139,7 @@ class ReceiverViewModel : ViewModel() {
     }
 
     private fun clearCurrent() {
-        curBits.clear()
-        curCount = 0
+        ring.clear()
         inFrame = false
         hexTokens.clear()
         partial.clear()
