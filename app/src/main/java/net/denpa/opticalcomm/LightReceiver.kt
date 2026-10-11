@@ -25,14 +25,21 @@ class LightReceiver(private val context: Context) {
     private var executor: ExecutorService? = null
     private var camera: Camera? = null
     private var stopped = false
+    private var roi = RoiTracker(0)
+    private var cols = 0
+    private var rows = 0
+    private var cellMean = FloatArray(0)
 
     fun start(
         owner: LifecycleOwner,
         previewView: PreviewView,
         front: Boolean,
         onSample: (Long, Float) -> Unit,
+        onRebase: (hi: Float, lo: Float) -> Unit = { _, _ -> },
+        onRoi: (RoiRect) -> Unit = {},
     ) {
         stopped = false
+        cols = 0 // 次のフレームでトラッカーを作り直す
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             if (stopped) return@addListener
@@ -49,13 +56,17 @@ class LightReceiver(private val context: Context) {
                 .setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(30, 30))
             val analysis = analysisBuilder.build()
             analysis.setAnalyzer(exec) { image ->
-                onSample(image.imageInfo.timestamp, brightness(image))
+                val lum = brightness(image)
+                if (roi.switched) onRebase(roi.selectedHi, roi.selectedLo)
+                onSample(image.imageInfo.timestamp, lum)
+                onRoi(roiRect(image))
                 image.close()
             }
 
             val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
             p.unbindAll()
             camera = p.bindToLifecycle(owner, selector, preview, analysis)
+            setExposureCompensation(EXPOSURE_COMP_EV)
             // AE が点滅を打ち消さないよう、露出が落ち着いた後にロックする
             previewView.postDelayed({ if (!stopped) setAeLock(true) }, 1500)
         }, ContextCompat.getMainExecutor(context))
@@ -70,6 +81,17 @@ class LightReceiver(private val context: Context) {
         executor = null
     }
 
+    /** 環境光を暗くして、トーチの明るい点を際立たせる(明るい部屋で全体が白っぽくなるのを避ける)。 */
+    private fun setExposureCompensation(ev: Float) {
+        val cam = camera ?: return
+        val state = cam.cameraInfo.exposureState
+        if (!state.isExposureCompensationSupported) return
+        val step = state.exposureCompensationStep.toFloat()
+        val range = state.exposureCompensationRange
+        val index = Math.round(ev / step).coerceIn(range.lower, range.upper)
+        cam.cameraControl.setExposureCompensationIndex(index)
+    }
+
     private fun setAeLock(lock: Boolean) {
         val cam = camera ?: return
         Camera2CameraControl.from(cam.cameraControl).setCaptureRequestOptions(
@@ -81,7 +103,8 @@ class LightReceiver(private val context: Context) {
     }
 
     /**
-     * 画面全体の平均輝度。トーチが映るか周囲を照らす分だけ平均が動く。
+     * 画面を CELL x CELL ピクセルのセルに分け、点滅の振れ幅が最大のセルの平均輝度([RoiTracker])を返す。
+     * 遠くのトーチは数ピクセルにしか映らないため、大きなブロックの平均では点滅が埋もれる。
      * 上位1%などのピーク指標は、白飛びした照明が常時最大値になり変化を拾えない。
      */
     private fun brightness(image: ImageProxy): Float {
@@ -90,15 +113,49 @@ class LightReceiver(private val context: Context) {
         val rowStride = plane.rowStride
         val w = image.width
         val h = image.height
-        var sum = 0L
-        var n = 0
-        for (y in 0 until h step 2) {
-            val base = y * rowStride
-            for (x in 0 until w step 2) {
-                sum += buf.get(base + x).toInt() and 0xFF
-                n++
+        if (cols != w / CELL || rows != h / CELL) {
+            cols = w / CELL
+            rows = h / CELL
+            roi = RoiTracker(cols * rows, decay = ROI_DECAY, minSwitchContrast = ROI_MIN_CONTRAST)
+            cellMean = FloatArray(cols * rows)
+        }
+        var total = 0L
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                var sum = 0
+                for (y in r * CELL until (r + 1) * CELL) {
+                    val base = y * rowStride + c * CELL
+                    for (x in 0 until CELL) sum += buf.get(base + x).toInt() and 0xFF
+                }
+                cellMean[r * cols + c] = sum.toFloat() / (CELL * CELL)
+                total += sum
             }
         }
-        return sum.toFloat() / n
+        return roi.update(cellMean, total.toFloat() / (cols * rows * CELL * CELL))
+    }
+
+    /** 現在トラッキング中の領域(全体平均なら画面全体)を、解析バッファ上のピクセル座標で返す。 */
+    private fun roiRect(image: ImageProxy): RoiRect {
+        val m = FloatArray(9)
+        image.imageInfo.sensorToBufferTransformMatrix.getValues(m)
+        val sel = roi.selected
+        if (cols == 0 || sel >= cols * rows) return RoiRect(0f, 0f, image.width.toFloat(), image.height.toFloat(), m)
+        val x = (sel % cols) * CELL.toFloat()
+        val y = (sel / cols) * CELL.toFloat()
+        return RoiRect(x, y, x + CELL, y + CELL, m)
+    }
+
+    private companion object {
+        /** トラッキングのセル一辺(ピクセル)。 */
+        const val CELL = 4
+
+        /** セルの振れ幅の減衰(1フレームあたり)。AE の整定などで付いた古い振れ幅が長く残らないようにする。 */
+        const val ROI_DECAY = 0.01f
+
+        /** この振れ幅未満のセルへは乗り換えない(ノイズ対策)。 */
+        const val ROI_MIN_CONTRAST = 8f
+
+        /** 露出補正(EV)。環境光を暗くしてトーチ点との差を広げる。 */
+        const val EXPOSURE_COMP_EV = -2f
     }
 }

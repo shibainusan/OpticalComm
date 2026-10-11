@@ -22,13 +22,25 @@ class SignalSlicer(
     private var prevT = 0L
     private var prevLum = 0f
     private var nextCenter = 0L
+    private var rebased = false
 
     fun reset() {
         initialized = false
         level = false
     }
 
+    /** 参照領域が変わって輝度の基準が飛んだときに、ピーク追従値を新しい領域のものへ差し替える。ビット格子はそのまま。 */
+    fun rebase(hi: Float, lo: Float) {
+        this.hi = hi
+        this.lo = lo
+        rebased = true
+    }
+
     fun push(t: Long, lum: Float) {
+        if (rebased) {
+            prevLum = lum
+            rebased = false
+        }
         if (!initialized) {
             hi = lum; lo = lum; prevT = t; prevLum = lum; initialized = true
             nextCenter = t + bitNanos / 2

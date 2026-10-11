@@ -62,6 +62,8 @@ data class ReceiverUiState(
     val bitLines: List<String> = emptyList(),
     /** 受信中でまだ注釈が付いていない行。 */
     val currentBits: String = "",
+    /** 受信輝度のトラッキング領域(デバッグ用にプレビューへ赤枠で重ねる)。 */
+    val roi: RoiRect? = null,
 )
 
 private const val HUNT_RING_BITS = 24
@@ -154,6 +156,17 @@ class ReceiverViewModel : ViewModel() {
         publish()
     }
 
+    /** 参照領域が切り替わったとき(解析スレッドから、直後の onSample の前に呼ばれる)。 */
+    fun onRebase(hi: Float, lo: Float) = slicer.rebase(hi, lo)
+
+    @Volatile
+    private var roiRect: RoiRect? = null
+
+    /** トラッキング領域が更新されたとき(解析スレッドから)。 */
+    fun onRoi(r: RoiRect) {
+        roiRect = r
+    }
+
     private fun publish() {
         synchronized(log) {
             _state.value = ReceiverUiState(
@@ -164,6 +177,7 @@ class ReceiverViewModel : ViewModel() {
                 log = log.toList(),
                 bitLines = bitLines.toList(),
                 currentBits = currentLine(),
+                roi = roiRect,
             )
         }
     }

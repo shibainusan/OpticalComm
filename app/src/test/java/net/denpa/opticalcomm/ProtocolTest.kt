@@ -127,4 +127,59 @@ class ProtocolTest {
             }
         }
     }
+
+    // ---- ROI(トーチが映るブロックの選択) ----
+
+    @Test
+    fun roiTrackerPicksBlinkingBlockAndIgnoresStaticNoise() {
+        val rnd = Random(3)
+        val blocks = FloatArray(48)
+        // 点滅なし: ノイズだけなら全体平均のまま切り替わらない
+        val quiet = RoiTracker(48)
+        repeat(200) {
+            for (i in blocks.indices) blocks[i] = 200f + (rnd.nextFloat() - 0.5f) * 2f
+            quiet.update(blocks, blocks.average().toFloat())
+        }
+        assertEquals(48, quiet.selected)
+
+        // 明るい背景(200)で、ブロック10だけ +30 の点滅(全体平均の振れは約0.6しかない)
+        val t = RoiTracker(48)
+        var switchedOnce = false
+        var last = 0f
+        for (f in 0 until 120) {
+            for (i in blocks.indices) blocks[i] = 200f + (rnd.nextFloat() - 0.5f) * 2f
+            val on = (f / 2) % 2 == 0
+            if (on) blocks[10] += 30f
+            last = t.update(blocks, blocks.average().toFloat())
+            if (t.switched) switchedOnce = true
+        }
+        assertTrue(switchedOnce)
+        assertEquals(10, t.selected)
+        assertTrue("hi=${t.selectedHi} lo=${t.selectedLo}", t.selectedHi - t.selectedLo > 25f)
+        assertTrue(last > 150f)
+    }
+
+    @Test
+    fun slicerRebaseKeepsDecoding() {
+        // 途中で参照領域が変わり、輝度の基準が飛んでも復号できる
+        val bits = Frame.encode("Hi")
+        val bitNs = BIT_MS * 1_000_000L
+        val events = ArrayList<DecodeEvent>()
+        val dec = BitStreamDecoder()
+        val slicer = SignalSlicer { b -> dec.push(b)?.let { if (it is DecodeEvent.Message) events.add(it) } }
+        val leadNs = 1_000_000_000L
+        var t = 0L
+        var rebased = false
+        while (t < leadNs + bits.size * bitNs + 1_500_000_000L) {
+            val i = ((t - leadNs) / bitNs).toInt()
+            val on = t >= leadNs && i in bits.indices && bits[i]
+            // 前半は背景 200 / 点灯 230、後半(rebase 後)は背景 40 / 点灯 220
+            val after = t > leadNs / 2 + 300_000_000L
+            val lum = if (!after) (if (on) 230f else 200f) else (if (on) 220f else 40f)
+            if (after && !rebased) { slicer.rebase(220f, 40f); rebased = true }
+            slicer.push(t, lum)
+            t += 33_333_333L
+        }
+        assertEquals(listOf<DecodeEvent>(DecodeEvent.Message("Hi")), events)
+    }
 }

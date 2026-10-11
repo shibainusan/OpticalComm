@@ -1,8 +1,11 @@
 package net.denpa.opticalcomm.ui
 
+import android.graphics.Matrix
+import android.graphics.RectF
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -112,7 +117,7 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
     DisposableEffect(front, paused) {
         if (!paused) {
             vm.resetSignal()
-            receiver.start(owner, previewView, front, vm::onSample)
+            receiver.start(owner, previewView, front, vm::onSample, vm::onRebase, vm::onRoi)
         }
         onDispose { receiver.stop() }
     }
@@ -124,7 +129,31 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
     }
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        AndroidView(factory = { previewView }, modifier = Modifier.fillMaxWidth().height(140.dp).clipToBounds())
+        Box(Modifier.fillMaxWidth().height(140.dp).clipToBounds()) {
+            AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+            // デバッグ用: 受信輝度のトラッキング領域を赤枠で表示する
+            Canvas(Modifier.fillMaxSize()) {
+                val r = s.roi ?: return@Canvas
+                // 解析バッファ → センサー → PreviewView の順に CameraX の行列で変換する(回転・ミラー・余白を含む)
+                val sensorToView = previewView.sensorToViewTransform ?: return@Canvas
+                val bufferToSensor = Matrix()
+                if (!Matrix().apply { setValues(r.sensorToBuffer) }.invert(bufferToSensor)) return@Canvas
+                bufferToSensor.postConcat(sensorToView)
+                val box = RectF(r.left, r.top, r.right, r.bottom)
+                bufferToSensor.mapRect(box)
+                // 数ピクセルのセルは小さすぎて見えないので、最小 28px の枠にして中心を合わせる
+                val cx = box.centerX()
+                val cy = box.centerY()
+                val bw = maxOf(box.width(), 28f)
+                val bh = maxOf(box.height(), 28f)
+                drawRect(
+                    Color.Red,
+                    topLeft = Offset(cx - bw / 2f, cy - bh / 2f),
+                    size = Size(bw, bh),
+                    style = Stroke(width = 3f),
+                )
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { front = !front }) { Text(if (front) "前面カメラ" else "背面カメラ") }
             TextButton(onClick = vm::clearLog) { Text("履歴消去") }
