@@ -3,6 +3,7 @@ package net.denpa.opticalcomm
 /**
  * 輝度サンプル列(タイムスタンプ付き)を2値化し、エッジに再同期しながら
  * 各ビット中央でサンプリングしてビット列を出力する。
+ * 最初のサンプルからビットの出力を始め(信号ONを待たない)、以降はエッジごとにビット格子を合わせ直す。
  */
 class SignalSlicer(
     private val bitNanos: Long = BIT_MS * 1_000_000L,
@@ -20,18 +21,17 @@ class SignalSlicer(
     private var initialized = false
     private var prevT = 0L
     private var prevLum = 0f
-    private var synced = false
     private var nextCenter = 0L
 
     fun reset() {
         initialized = false
-        synced = false
         level = false
     }
 
     fun push(t: Long, lum: Float) {
         if (!initialized) {
             hi = lum; lo = lum; prevT = t; prevLum = lum; initialized = true
+            nextCenter = t + bitNanos / 2
             return
         }
         // ピーク追従(ゆっくり減衰)
@@ -54,11 +54,11 @@ class SignalSlicer(
             // フレーム間隔より細かくエッジ時刻を推定する(単純な中点だとフレーム間隔の半分の誤差が出る)
             val frac = if (lum != prevLum) ((threshold - prevLum) / (lum - prevLum)).coerceIn(0f, 1f) else 0.5f
             val edge = prevT + ((t - prevT) * frac).toLong()
-            if (synced) emitUntil(edge) else if (newLevel) synced = true
+            emitUntil(edge)
             level = newLevel
-            if (synced) nextCenter = edge + bitNanos / 2
+            nextCenter = edge + bitNanos / 2
         }
-        if (synced) emitUntil(t)
+        emitUntil(t)
         prevT = t
         prevLum = lum
     }

@@ -64,7 +64,7 @@ data class ReceiverUiState(
     val currentBits: String = "",
 )
 
-private const val HUNT_RING_BITS = 40
+private const val HUNT_RING_BITS = 24
 
 class ReceiverViewModel : ViewModel() {
     private val decoder = BitStreamDecoder()
