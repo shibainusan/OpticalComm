@@ -97,7 +97,8 @@ class BitStreamDecoder {
     private fun resetTo(rearmed: Boolean) {
         state = DecoderState.HUNT
         active = false
-        zeroRun = if (rearmed) ARM_ZEROS else 0
+        // 失敗後も次の点灯をすぐ検出できるようにする(0を8個待つと、ノイズ下で2回目以降の「受信中」が出なくなる)
+        zeroRun = ARM_ZEROS
         huntBits = 0
         if (rearmed) window = 0
         cur = 0

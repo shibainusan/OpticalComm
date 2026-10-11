@@ -118,6 +118,7 @@ class ReceiverViewModel : ViewModel() {
 
     private fun currentLine(): String =
         if (inFrame) (hexTokens + listOfNotNull(partial.takeIf { it.isNotEmpty() }?.toString())).joinToString(" ")
+        else if (decoder.active) "${groupFromEnd(ring)} ←プリアンブル受信中"
         else groupFromEnd(ring)
 
     /** 最新ビット(末尾)を基準に8bit区切りにする。リングが流れても区切り位置が末尾に揃う。 */
