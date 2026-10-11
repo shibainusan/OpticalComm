@@ -29,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -100,7 +101,11 @@ private fun ReceiveTab(vm: ReceiverViewModel = viewModel()) {
     var front by rememberSaveable { mutableStateOf(false) }
     val receiver = remember { LightReceiver(context) }
     val previewView = remember {
-        PreviewView(context).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE }
+        PreviewView(context).apply {
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            // 既定の FILL_CENTER だとプレビューが枠外にはみ出し、上のタブを覆うことがある
+            scaleType = PreviewView.ScaleType.FIT_CENTER
+        }
     }
 
     DisposableEffect(front) {
@@ -119,7 +124,7 @@ private fun ReceiveTab(vm: ReceiverViewModel = viewModel()) {
         Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        AndroidView(factory = { previewView }, modifier = Modifier.fillMaxWidth().height(200.dp))
+        AndroidView(factory = { previewView }, modifier = Modifier.fillMaxWidth().height(200.dp).clipToBounds())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { front = !front }) { Text(if (front) "前面カメラ" else "背面カメラ") }
             TextButton(onClick = vm::clearLog) { Text("履歴消去") }
