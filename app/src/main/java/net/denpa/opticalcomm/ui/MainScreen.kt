@@ -1,13 +1,14 @@
 package net.denpa.opticalcomm.ui
 
-import android.graphics.Matrix
-import android.graphics.RectF
-import androidx.camera.view.PreviewView
+import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,17 +32,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.denpa.opticalcomm.LightReceiver
@@ -106,18 +108,11 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
     val owner = LocalLifecycleOwner.current
     var front by rememberSaveable { mutableStateOf(false) }
     val receiver = remember { LightReceiver(context) }
-    val previewView = remember {
-        PreviewView(context).apply {
-            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-            // 既定の FILL_CENTER だとプレビューが枠外にはみ出し、上のタブを覆うことがある
-            scaleType = PreviewView.ScaleType.FIT_CENTER
-        }
-    }
 
     DisposableEffect(front, paused) {
         if (!paused) {
             vm.resetSignal()
-            receiver.start(owner, previewView, front, vm::onSample, vm::onRebase, vm::onRoi)
+            receiver.start(owner, front, vm::onSample, vm::onRebase, vm::onFrame)
         }
         onDispose { receiver.stop() }
     }
@@ -129,36 +124,42 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
     }
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Box(Modifier.fillMaxWidth().height(140.dp).clipToBounds()) {
-            AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
-            // デバッグ用: 受信輝度のトラッキング領域を赤枠で表示する
-            Canvas(Modifier.fillMaxSize()) {
-                val r = s.roi ?: return@Canvas
-                // 解析バッファ → センサー → PreviewView の順に CameraX の行列で変換する(回転・ミラー・余白を含む)
-                val sensorToView = previewView.sensorToViewTransform ?: return@Canvas
-                val bufferToSensor = Matrix()
-                if (!Matrix().apply { setValues(r.sensorToBuffer) }.invert(bufferToSensor)) return@Canvas
-                bufferToSensor.postConcat(sensorToView)
-                val box = RectF(r.left, r.top, r.right, r.bottom)
-                bufferToSensor.mapRect(box)
-                // 数ピクセルのセルは小さすぎて見えないので、最小 28px の枠にして中心を合わせる
-                val cx = box.centerX()
-                val cy = box.centerY()
-                val bw = maxOf(box.width(), 28f)
-                val bh = maxOf(box.height(), 28f)
-                drawRect(
-                    Color.Red,
-                    topLeft = Offset(cx - bw / 2f, cy - bh / 2f),
-                    size = Size(bw, bh),
-                    style = Stroke(width = 3f),
-                )
+        // 解析画像を 32x32 に縮小したもの(トラッキングが実際に見ている絵)を、プレビューの代わりに表示する
+        Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+            val f = s.frame
+            if (f != null) {
+                val bitmap = remember(f) {
+                    Bitmap.createBitmap(f.pixels, f.size, f.size, Bitmap.Config.ARGB_8888).asImageBitmap()
+                }
+                Box(Modifier.fillMaxHeight().aspectRatio(1f)) {
+                    Image(
+                        bitmap,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.FillBounds,
+                        filterQuality = FilterQuality.None,
+                    )
+                    // デバッグ用: トラッキング中のセルを赤枠で表示する(全体平均のときは画像全体)
+                    Canvas(Modifier.fillMaxSize()) {
+                        val cell = size.width / f.size
+                        if (f.roiCol < 0) {
+                            drawRect(Color.Red, style = Stroke(width = 3f))
+                        } else {
+                            // 1セルは小さいので、中心を合わせて最小 18px の枠にする
+                            val b = maxOf(cell * 3f, 18f)
+                            val cx = (f.roiCol + 0.5f) * cell
+                            val cy = (f.roiRow + 0.5f) * cell
+                            drawRect(Color.Red, topLeft = Offset(cx - b / 2f, cy - b / 2f), size = Size(b, b), style = Stroke(width = 3f))
+                        }
+                    }
+                }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { front = !front }) { Text(if (front) "前面カメラ" else "背面カメラ") }
             TextButton(onClick = vm::clearLog) { Text("履歴消去") }
         }
-        Text(if (paused) "送信中のため受信停止" else "信号: ${if (s.level) "ON" else "OFF"} / 状態: ${s.decoderState}")
+        Text(if (paused) "送信中のため受信停止" else "信号: ${if (s.level) "ON" else "OFF"} / 状態: ${s.decoderState}${s.frame?.let { " / 解析 ${it.imageWidth}x${it.imageHeight}" } ?: ""}")
         Canvas(Modifier.fillMaxWidth().height(56.dp)) {
             val n = s.samples.size
             if (n > 1) {

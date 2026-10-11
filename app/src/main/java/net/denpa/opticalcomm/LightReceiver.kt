@@ -2,6 +2,8 @@ package net.denpa.opticalcomm
 
 import android.content.Context
 import android.hardware.camera2.CaptureRequest
+import android.os.Handler
+import android.os.Looper
 import android.util.Range
 import android.util.Size
 import androidx.camera.camera2.interop.Camera2CameraControl
@@ -11,9 +13,7 @@ import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
-import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import java.util.concurrent.ExecutorService
@@ -25,29 +25,37 @@ class LightReceiver(private val context: Context) {
     private var executor: ExecutorService? = null
     private var camera: Camera? = null
     private var stopped = false
-    private var roi = RoiTracker(0)
-    private var cols = 0
-    private var rows = 0
-    private var cellMean = FloatArray(0)
+    private val roi = RoiTracker(GRID * GRID, decay = ROI_DECAY, minSwitchContrast = ROI_MIN_CONTRAST)
+    private val cellMean = FloatArray(GRID * GRID)
+    private val sums = IntArray(GRID * GRID)
 
+    // 解析画像のサイズが変わったときだけ作り直す下ごしらえ
+    private var lastW = 0
+    private var lastH = 0
+    private var colIdx = IntArray(0)
+    private var colCount = IntArray(GRID)
+    private var rowCount = IntArray(GRID)
+    private var rowBytes = ByteArray(0)
+
+    /**
+     * プレビューは出さず、解析画像だけをバインドする。解析画像は [GRID]x[GRID] のセルに縮小して受信輝度を取り、
+     * 同じ縮小画像を [onFrame] でデバッグ表示用に渡す。
+     */
     fun start(
         owner: LifecycleOwner,
-        previewView: PreviewView,
         front: Boolean,
         onSample: (Long, Float) -> Unit,
         onRebase: (hi: Float, lo: Float) -> Unit = { _, _ -> },
-        onRoi: (RoiRect) -> Unit = {},
+        onFrame: (DebugFrame) -> Unit = {},
     ) {
         stopped = false
-        cols = 0 // 次のフレームでトラッカーを作り直す
+        roi.reset()
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             if (stopped) return@addListener
             val p = future.get()
             provider = p
             val exec = Executors.newSingleThreadExecutor().also { executor = it }
-
-            val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
 
             val analysisBuilder = ImageAnalysis.Builder()
                 .setTargetResolution(Size(320, 240))
@@ -59,16 +67,16 @@ class LightReceiver(private val context: Context) {
                 val lum = brightness(image)
                 if (roi.switched) onRebase(roi.selectedHi, roi.selectedLo)
                 onSample(image.imageInfo.timestamp, lum)
-                onRoi(roiRect(image))
+                onFrame(debugFrame(image, front))
                 image.close()
             }
 
             val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
             p.unbindAll()
-            camera = p.bindToLifecycle(owner, selector, preview, analysis)
+            camera = p.bindToLifecycle(owner, selector, analysis)
             setExposureCompensation(EXPOSURE_COMP_EV)
             // AE が点滅を打ち消さないよう、露出が落ち着いた後にロックする
-            previewView.postDelayed({ if (!stopped) setAeLock(true) }, 1500)
+            Handler(Looper.getMainLooper()).postDelayed({ if (!stopped) setAeLock(true) }, 1500)
         }, ContextCompat.getMainExecutor(context))
     }
 
@@ -103,8 +111,8 @@ class LightReceiver(private val context: Context) {
     }
 
     /**
-     * 画面を CELL x CELL ピクセルのセルに分け、点滅の振れ幅が最大のセルの平均輝度([RoiTracker])を返す。
-     * 遠くのトーチは数ピクセルにしか映らないため、大きなブロックの平均では点滅が埋もれる。
+     * 解析画像を [GRID]x[GRID] のセルに縮小(各セルは平均輝度)し、点滅の振れ幅が最大のセルの輝度([RoiTracker])を返す。
+     * 遠くのトーチは数ピクセルにしか映らないため、全体平均では点滅が埋もれる。
      * 上位1%などのピーク指標は、白飛びした照明が常時最大値になり変化を拾えない。
      */
     private fun brightness(image: ImageProxy): Float {
@@ -113,41 +121,55 @@ class LightReceiver(private val context: Context) {
         val rowStride = plane.rowStride
         val w = image.width
         val h = image.height
-        if (cols != w / CELL || rows != h / CELL) {
-            cols = w / CELL
-            rows = h / CELL
-            roi = RoiTracker(cols * rows, decay = ROI_DECAY, minSwitchContrast = ROI_MIN_CONTRAST)
-            cellMean = FloatArray(cols * rows)
+        if (w != lastW || h != lastH) {
+            lastW = w
+            lastH = h
+            colIdx = IntArray(w) { it * GRID / w }
+            rowBytes = ByteArray(w)
+            colCount = IntArray(GRID).also { for (x in 0 until w) it[colIdx[x]]++ }
+            rowCount = IntArray(GRID).also { for (y in 0 until h) it[y * GRID / h]++ }
+        }
+        sums.fill(0)
+        for (y in 0 until h) {
+            buf.position(y * rowStride)
+            buf.get(rowBytes, 0, w)
+            val base = (y * GRID / h) * GRID
+            for (x in 0 until w) sums[base + colIdx[x]] += rowBytes[x].toInt() and 0xFF
         }
         var total = 0L
-        for (r in 0 until rows) {
-            for (c in 0 until cols) {
-                var sum = 0
-                for (y in r * CELL until (r + 1) * CELL) {
-                    val base = y * rowStride + c * CELL
-                    for (x in 0 until CELL) sum += buf.get(base + x).toInt() and 0xFF
-                }
-                cellMean[r * cols + c] = sum.toFloat() / (CELL * CELL)
-                total += sum
+        for (r in 0 until GRID) {
+            for (c in 0 until GRID) {
+                val i = r * GRID + c
+                total += sums[i]
+                cellMean[i] = sums[i].toFloat() / (colCount[c] * rowCount[r])
             }
         }
-        return roi.update(cellMean, total.toFloat() / (cols * rows * CELL * CELL))
+        return roi.update(cellMean, total.toFloat() / (w * h))
     }
 
-    /** 現在トラッキング中の領域(全体平均なら画面全体)を、解析バッファ上のピクセル座標で返す。 */
-    private fun roiRect(image: ImageProxy): RoiRect {
-        val m = FloatArray(9)
-        image.imageInfo.sensorToBufferTransformMatrix.getValues(m)
+    /** 縮小画像を表示向きのグレースケールにし、トラッキング中のセル位置を添えて返す(表示は最小〜最大に引き伸ばす)。 */
+    private fun debugFrame(image: ImageProxy, mirror: Boolean): DebugFrame {
+        var lo = Float.MAX_VALUE
+        var hi = -Float.MAX_VALUE
+        for (v in cellMean) { if (v < lo) lo = v; if (v > hi) hi = v }
+        val scale = 255f / maxOf(hi - lo, 1f)
+        val rot = image.imageInfo.rotationDegrees
+        val pixels = IntArray(GRID * GRID)
+        for (r in 0 until GRID) {
+            for (c in 0 until GRID) {
+                val g = ((cellMean[r * GRID + c] - lo) * scale).toInt().coerceIn(0, 255)
+                val (dc, dr) = toDisplayCell(c, r, GRID, rot, mirror)
+                pixels[dr * GRID + dc] = (0xFF shl 24) or (g shl 16) or (g shl 8) or g
+            }
+        }
         val sel = roi.selected
-        if (cols == 0 || sel >= cols * rows) return RoiRect(0f, 0f, image.width.toFloat(), image.height.toFloat(), m)
-        val x = (sel % cols) * CELL.toFloat()
-        val y = (sel / cols) * CELL.toFloat()
-        return RoiRect(x, y, x + CELL, y + CELL, m)
+        val (rc, rr) = if (sel >= GRID * GRID) (-1 to -1) else toDisplayCell(sel % GRID, sel / GRID, GRID, rot, mirror)
+        return DebugFrame(pixels, GRID, rc, rr, image.width, image.height)
     }
 
     private companion object {
-        /** トラッキングのセル一辺(ピクセル)。 */
-        const val CELL = 4
+        /** 解析画像の縮小サイズ(セル数の一辺)。 */
+        const val GRID = 32
 
         /** セルの振れ幅の減衰(1フレームあたり)。AE の整定などで付いた古い振れ幅が長く残らないようにする。 */
         const val ROI_DECAY = 0.01f

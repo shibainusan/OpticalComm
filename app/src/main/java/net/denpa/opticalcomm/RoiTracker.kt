@@ -9,11 +9,32 @@ package net.denpa.opticalcomm
  * 他の候補の振れ幅が現在の [switchRatio] 倍を超えたときだけ乗り換える(ノイズでの頻繁な切替を避ける)。
  */
 /**
- * プレビュー上に重ねる領域。[left]..[bottom] は解析バッファ上のピクセル座標、[sensorToBuffer] はそのフレームの
- * `ImageInfo.sensorToBufferTransformMatrix`(Matrix.getValues の 9 要素)。
- * 表示側で PreviewView.getSensorToViewTransform と組み合わせて画面座標へ変換する。
+ * 受信欄に表示するデバッグ画像。[pixels] は [size]x[size] のグレースケール ARGB(表示向きに回転・ミラー済み)で、
+ * トラッキングが実際に見ているセル画像そのもの。[roiCol]/[roiRow] はトラッキング中のセル(全体平均なら -1)。
  */
-class RoiRect(val left: Float, val top: Float, val right: Float, val bottom: Float, val sensorToBuffer: FloatArray)
+class DebugFrame(
+    val pixels: IntArray,
+    val size: Int,
+    val roiCol: Int,
+    val roiRow: Int,
+    /** 元の解析画像の解像度。 */
+    val imageWidth: Int,
+    val imageHeight: Int,
+)
+
+/**
+ * センサー向きのセル位置 ([col], [row])(一辺 [n] セル)を、表示向きの位置へ変換する。
+ * [rotationDegrees] は表示で時計回りに回す角度、[mirror] は前面カメラの左右反転。
+ */
+fun toDisplayCell(col: Int, row: Int, n: Int, rotationDegrees: Int, mirror: Boolean): Pair<Int, Int> {
+    val (x, y) = when (((rotationDegrees % 360) + 360) % 360) {
+        90 -> (n - 1 - row) to col
+        180 -> (n - 1 - col) to (n - 1 - row)
+        270 -> row to (n - 1 - col)
+        else -> col to row
+    }
+    return (if (mirror) n - 1 - x else x) to y
+}
 
 class RoiTracker(
     private val blockCount: Int,

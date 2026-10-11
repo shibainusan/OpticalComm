@@ -182,4 +182,16 @@ class ProtocolTest {
         }
         assertEquals(listOf<DecodeEvent>(DecodeEvent.Message("Hi")), events)
     }
+
+    @Test
+    fun displayCellRotatesAndMirrors() {
+        // 4x4 の左上(0,0)を時計回りに回すと、90度で右上、180度で右下、270度で左下
+        assertEquals(3 to 0, toDisplayCell(0, 0, 4, 90, false))
+        assertEquals(3 to 3, toDisplayCell(0, 0, 4, 180, false))
+        assertEquals(0 to 3, toDisplayCell(0, 0, 4, 270, false))
+        assertEquals(0 to 0, toDisplayCell(0, 0, 4, 0, false))
+        // 前面カメラは左右反転
+        assertEquals(0 to 0, toDisplayCell(0, 0, 4, 90, true))
+        assertEquals(3 to 0, toDisplayCell(0, 0, 4, 0, true))
+    }
 }
