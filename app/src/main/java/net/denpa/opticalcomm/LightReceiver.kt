@@ -25,6 +25,9 @@ class LightReceiver(private val context: Context) {
     private var executor: ExecutorService? = null
     private var camera: Camera? = null
     private var stopped = false
+    private val handler = Handler(Looper.getMainLooper())
+    private var autoLock: Runnable? = null
+    private var onAeLock: (Boolean) -> Unit = {}
     private val roi = RoiTracker(GRID * GRID, decay = ROI_DECAY, minSwitchContrast = ROI_MIN_CONTRAST)
     private val cellMean = FloatArray(GRID * GRID)
     private val sums = IntArray(GRID * GRID)
@@ -47,8 +50,11 @@ class LightReceiver(private val context: Context) {
         onSample: (Long, Float) -> Unit,
         onRebase: (hi: Float, lo: Float) -> Unit = { _, _ -> },
         onFrame: (DebugFrame) -> Unit = {},
+        /** AE/AWB のロック状態が変わったとき(メインスレッドから)。起動時は false で通知する。 */
+        onAeLock: (Boolean) -> Unit = {},
     ) {
         stopped = false
+        this.onAeLock = onAeLock
         roi.reset()
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
@@ -74,14 +80,20 @@ class LightReceiver(private val context: Context) {
             val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
             p.unbindAll()
             camera = p.bindToLifecycle(owner, selector, analysis)
-            setExposureCompensation(EXPOSURE_COMP_EV)
-            // AE が点滅を打ち消さないよう、露出が落ち着いた後にロックする
-            Handler(Looper.getMainLooper()).postDelayed({ if (!stopped) setAeLock(true) }, 1500)
+            // AE が点滅を打ち消さないよう、起動から AE_LOCK_DELAY_MS 後(ライトを向ける時間を見込む)に自動でロックする。
+            // それまでに手動で操作した場合は、自動ロックはしない。
+            onAeLock(false)
+            cancelAutoLock()
+            autoLock = Runnable {
+                autoLock = null
+                if (!stopped) setAeLocked(true)
+            }.also { handler.postDelayed(it, AE_LOCK_DELAY_MS) }
         }, ContextCompat.getMainExecutor(context))
     }
 
     fun stop() {
         stopped = true
+        cancelAutoLock()
         provider?.unbindAll()
         provider = null
         camera = null
@@ -89,15 +101,17 @@ class LightReceiver(private val context: Context) {
         executor = null
     }
 
-    /** 環境光を暗くして、トーチの明るい点を際立たせる(明るい部屋で全体が白っぽくなるのを避ける)。 */
-    private fun setExposureCompensation(ev: Float) {
-        val cam = camera ?: return
-        val state = cam.cameraInfo.exposureState
-        if (!state.isExposureCompensationSupported) return
-        val step = state.exposureCompensationStep.toFloat()
-        val range = state.exposureCompensationRange
-        val index = Math.round(ev / step).coerceIn(range.lower, range.upper)
-        cam.cameraControl.setExposureCompensationIndex(index)
+    private fun cancelAutoLock() {
+        autoLock?.let { handler.removeCallbacks(it) }
+        autoLock = null
+    }
+
+    /** AE/AWB をロック/解除する(メインスレッドから)。自動ロックの予定があれば取り消す。 */
+    fun setAeLocked(lock: Boolean) {
+        cancelAutoLock()
+        if (camera == null) return
+        setAeLock(lock)
+        onAeLock(lock)
     }
 
     private fun setAeLock(lock: Boolean) {
@@ -171,13 +185,13 @@ class LightReceiver(private val context: Context) {
         /** 解析画像の縮小サイズ(セル数の一辺)。 */
         const val GRID = 32
 
+        /** 起動からこの時間後に AE/AWB を自動ロックする。 */
+        const val AE_LOCK_DELAY_MS = 3000L
+
         /** セルの振れ幅の減衰(1フレームあたり)。AE の整定などで付いた古い振れ幅が長く残らないようにする。 */
         const val ROI_DECAY = 0.01f
 
         /** この振れ幅未満のセルへは乗り換えない(ノイズ対策)。 */
         const val ROI_MIN_CONTRAST = 8f
-
-        /** 露出補正(EV)。環境光を暗くしてトーチ点との差を広げる。 */
-        const val EXPOSURE_COMP_EV = -2f
     }
 }

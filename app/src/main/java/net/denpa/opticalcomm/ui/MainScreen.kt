@@ -107,12 +107,13 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     var front by rememberSaveable { mutableStateOf(false) }
+    var aeLocked by remember { mutableStateOf(false) }
     val receiver = remember { LightReceiver(context) }
 
     DisposableEffect(front, paused) {
         if (!paused) {
             vm.resetSignal()
-            receiver.start(owner, front, vm::onSample, vm::onRebase, vm::onFrame)
+            receiver.start(owner, front, vm::onSample, vm::onRebase, vm::onFrame, onAeLock = { aeLocked = it })
         }
         onDispose { receiver.stop() }
     }
@@ -158,6 +159,9 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { front = !front }) { Text(if (front) "前面カメラ" else "背面カメラ") }
             TextButton(onClick = vm::clearLog) { Text("履歴消去") }
+            TextButton(onClick = { receiver.setAeLocked(!aeLocked) }, enabled = !paused) {
+                Text(if (aeLocked) "AEロック中(解除)" else "AE解除中(ロック)")
+            }
         }
         Text(if (paused) "送信中のため受信停止" else "信号: ${if (s.level) "ON" else "OFF"} / 状態: ${s.decoderState}${s.frame?.let { " / 解析 ${it.imageWidth}x${it.imageHeight}" } ?: ""}")
         Canvas(Modifier.fillMaxWidth().height(56.dp)) {
