@@ -3,25 +3,26 @@ package net.denpa.opticalcomm
 import kotlin.math.abs
 
 /**
- * 1フレーム前との輝度差(ΔY)の絶対値が大きいセルを追従する。
- * フレームごとの最大では、点滅の合間(差がほぼ 0)に別のセルへ飛ぶので、各セルの |ΔY| をピーク保持
- * (1フレームごとに [scoreDecay] 倍へ減衰)したスコアで選ぶ。さらに、現在の選択のスコアの [switchRatio] 倍を
- * 超えたときだけ乗り換える。
+ * 1フレーム前との輝度差(ΔY)が [minDelta] 以上で、かつ最大のセルを選び、[lockFrames] フレームのあいだ動かさない。
+ * その後、また同じ条件でセルを選び直す(条件を満たすセルが無ければ、いまのセルのまま)。
+ * 起動直後は全体平均(最後の候補)を使う。
  *
- * 各セルの輝度の最大/最小(hi/lo、[valueDecay] で減衰)も追い、乗り換え時にスライサへ渡して基準を合わせる。
+ * 各セル(と全体平均)の輝度の最大/最小(hi/lo、[valueDecay] で減衰)も追い、乗り換え時にスライサへ渡して基準を合わせる。
  */
 class DeltaTracker(
     private val count: Int,
+    private val minDelta: Float = 200f,
+    private val lockFrames: Int = 8,
     private val valueDecay: Float = 0.01f,
-    private val scoreDecay: Float = 0.97f,
-    private val switchRatio: Float = 1.25f,
 ) {
-    private val hi = FloatArray(count)
-    private val lo = FloatArray(count)
-    private val score = FloatArray(count)
+    private val n = count + 1
+    private val hi = FloatArray(n)
+    private val lo = FloatArray(n)
     private var initialized = false
+    private var lockLeft = 0
 
-    var selected = 0
+    /** 現在選択中の候補。[count] なら全体平均。 */
+    var selected = count
         private set
 
     /** 直近の [update] で選択が変わったら true。 */
@@ -33,34 +34,40 @@ class DeltaTracker(
 
     fun reset() {
         initialized = false
-        score.fill(0f)
-        selected = 0
+        lockLeft = 0
+        selected = count
         switched = false
     }
 
-    /** [values] は各セルの輝度、[diffs] は1フレーム前との差(今回 - 前回)。選択中セルの輝度を返す。 */
-    fun update(values: FloatArray, diffs: FloatArray): Float {
+    /** [values] は各セルの輝度、[diffs] は1フレーム前との差(今回 - 前回)、[mean] は全体平均。選択中の輝度を返す。 */
+    fun update(values: FloatArray, diffs: FloatArray, mean: Float): Float {
         require(values.size == count && diffs.size == count)
+        fun value(i: Int) = if (i < count) values[i] else mean
         if (!initialized) {
-            for (i in 0 until count) { hi[i] = values[i]; lo[i] = values[i] }
+            for (i in 0 until n) { hi[i] = value(i); lo[i] = hi[i] }
             initialized = true
         } else {
-            for (i in 0 until count) {
-                val v = values[i]
+            for (i in 0 until n) {
+                val v = value(i)
                 hi[i] = if (v > hi[i]) v else hi[i] - (hi[i] - lo[i]) * valueDecay
                 lo[i] = if (v < lo[i]) v else lo[i] + (hi[i] - lo[i]) * valueDecay
             }
         }
-        var best = selected
-        for (i in 0 until count) {
-            score[i] = maxOf(abs(diffs[i]), score[i] * scoreDecay)
-            if (score[i] > score[best]) best = i
-        }
         switched = false
-        if (best != selected && score[best] > score[selected] * switchRatio) {
-            selected = best
-            switched = true
+        if (lockLeft > 0) {
+            lockLeft--
+        } else {
+            var best = -1
+            var bestDelta = minDelta
+            for (i in 0 until count) {
+                val d = abs(diffs[i])
+                if (d >= bestDelta) { best = i; bestDelta = d }
+            }
+            if (best >= 0) {
+                if (best != selected) { selected = best; switched = true }
+                lockLeft = lockFrames
+            }
         }
-        return values[selected]
+        return value(selected)
     }
 }

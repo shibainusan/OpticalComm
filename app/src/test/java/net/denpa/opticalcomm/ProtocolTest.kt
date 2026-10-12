@@ -194,30 +194,35 @@ class ProtocolTest {
     }
 
     @Test
-    fun deltaTrackerFollowsBlinkingCellAndStaysPut() {
-        val rnd = Random(11)
-        val n = 40
-        val values = FloatArray(n)
-        val prev = FloatArray(n)
+    fun deltaTrackerLocksMaxDeltaAbove200ForEightFramesThenReselects() {
+        val n = 6
+        val values = FloatArray(n) { 100f }
         val diffs = FloatArray(n)
         val t = DeltaTracker(n)
-        var selectedAtEnd = -1
-        var changesInLast60 = 0
-        var last = -1
-        for (f in 0 until 160) {
-            for (i in 0 until n) values[i] = 100f + (rnd.nextFloat() - 0.5f) * 2f
-            if ((f / 2) % 2 == 0) values[7] += 40f
-            for (i in 0 until n) diffs[i] = if (f == 0) 0f else values[i] - prev[i]
-            values.copyInto(prev)
-            t.update(values, diffs)
-            if (f >= 100) {
-                if (last != -1 && t.selected != last) changesInLast60++
-                last = t.selected
-            }
-            selectedAtEnd = t.selected
+        // 条件(|ΔY|>=200)を満たすセルが無い間は、全体平均のまま
+        diffs[1] = 150f
+        t.update(values, diffs, 100f)
+        assertEquals(n, t.selected)
+        // 200 以上で最大のセル(符号は問わない)を選ぶ
+        diffs[1] = 210f
+        diffs[3] = -230f
+        t.update(values, diffs, 100f)
+        assertEquals(3, t.selected)
+        assertTrue(t.switched)
+        // 次の8フレームは、より大きな差が現れても動かさない
+        diffs[3] = 0f
+        diffs[4] = 255f
+        repeat(8) {
+            t.update(values, diffs, 100f)
+            assertEquals(3, t.selected)
         }
-        assertEquals(7, selectedAtEnd)
-        assertEquals(0, changesInLast60)
+        // 9フレーム目で選び直す
+        t.update(values, diffs, 100f)
+        assertEquals(4, t.selected)
+        // 条件を満たすセルが無くなっても、いまのセルのまま
+        diffs.fill(0f)
+        repeat(20) { t.update(values, diffs, 100f) }
+        assertEquals(4, t.selected)
     }
 
     @Test

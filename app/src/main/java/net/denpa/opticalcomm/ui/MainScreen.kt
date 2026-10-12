@@ -168,14 +168,18 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
         }
         Text(if (paused) "送信中のため受信停止" else "信号: ${if (s.level) "ON" else "OFF"} / 状態: ${s.decoderState}${s.frame?.let { " / 解析 ${it.imageWidth}x${it.imageHeight}" } ?: ""}")
         s.frame?.let {
-            Text("追跡セル(ΔY最大) Y=%.0f U=%.1f V=%.1f ΔY=%+.1f (最大|ΔY|=%.1f)".format(it.roiY, it.roiU, it.roiV, it.roiDiff, it.maxAbsDiff), fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            val text = if (it.roiCol < 0) {
+                "追跡: 全体平均(ΔY条件のセル待ち) Y=%.0f (最大|ΔY|=%.1f)".format(it.roiY, it.maxAbsDiff)
+            } else {
+                "追跡セル Y=%.0f U=%.1f V=%.1f ΔY=%+.1f (最大|ΔY|=%.1f)".format(it.roiY, it.roiU, it.roiV, it.roiDiff, it.maxAbsDiff)
+            }
+            Text(text, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
         }
         Canvas(Modifier.fillMaxWidth().height(56.dp)) {
             val n = s.samples.size
             if (n > 1) {
-                val vMin = minOf(s.samples.min(), s.threshold)
-                val vMax = maxOf(s.samples.max(), s.threshold, vMin + 10f)
-                fun y(v: Float) = size.height * (1f - (v - vMin) / (vMax - vMin))
+                // 縦軸は輝度 0..255 の固定スケール(振れの大きさが実際の輝度差のまま見える)
+                fun y(v: Float) = size.height * (1f - v.coerceIn(0f, 255f) / 255f)
                 for (i in 1 until n) {
                     drawLine(
                         Color(0xFF1976D2),

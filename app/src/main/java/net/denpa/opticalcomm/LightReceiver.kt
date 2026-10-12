@@ -29,7 +29,8 @@ class LightReceiver(private val context: Context) {
     private var autoLock: Runnable? = null
     private var onAeLock: (Boolean) -> Unit = {}
     /** ΔY の大きいセルを追従する(トラッキング対象)。 */
-    private val tracker = DeltaTracker(GRID * GRID)
+    private val tracker = DeltaTracker(GRID * GRID, minDelta = TRACK_MIN_DELTA, lockFrames = TRACK_LOCK_FRAMES)
+    private var overallMean = 0f
     private val cellMean = FloatArray(GRID * GRID)
     private val sums = IntArray(GRID * GRID)
 
@@ -144,7 +145,7 @@ class LightReceiver(private val context: Context) {
     }
 
     /**
-     * 解析画像を [GRID]x[GRID] のセルに縮小(各セルは平均輝度)し、1フレーム前との差(ΔY)が大きいセル([DeltaTracker])の輝度を返す。
+     * 解析画像を [GRID]x[GRID] のセルに縮小(各セルは平均輝度)し、1フレーム前との差(ΔY)が一定以上で最大のセルを一定フレームだけ固定して追う([DeltaTracker])。
      * 遠くのトーチは数ピクセルにしか映らないため、全体平均では点滅が埋もれる。
      */
     private fun brightness(image: ImageProxy): Float {
@@ -177,7 +178,10 @@ class LightReceiver(private val context: Context) {
         for (i in cellMean.indices) diffMean[i] = if (hasPrev) cellMean[i] - prevMean[i] else 0f
         cellMean.copyInto(prevMean)
         hasPrev = true
-        return tracker.update(cellMean, diffMean)
+        var total = 0L
+        for (s in sums) total += s
+        overallMean = total.toFloat() / (w * h)
+        return tracker.update(cellMean, diffMean, overallMean)
     }
 
     /** セル [cell] に対応する範囲の U/V の平均(U/V プレーンは輝度の半分の解像度)。プレーンが無ければ無彩色(128)。 */
@@ -229,6 +233,10 @@ class LightReceiver(private val context: Context) {
             }
         }
         val sel = tracker.selected
+        if (sel >= GRID * GRID) {
+            // まだ条件を満たすセルが無く、全体平均を使っている
+            return DebugFrame(pixels, GRID, -1, -1, image.width, image.height, overallMean, Float.NaN, Float.NaN, diffPixels, Float.NaN, maxAbs)
+        }
         val (rc, rr) = toDisplayCell(sel % GRID, sel / GRID, GRID, rot, mirror)
         val (u, v) = cellChroma(image, sel)
         return DebugFrame(pixels, GRID, rc, rr, image.width, image.height, cellMean[sel], u, v, diffPixels, diffMean[sel], maxAbs)
@@ -237,6 +245,12 @@ class LightReceiver(private val context: Context) {
     private companion object {
         /** 解析画像の縮小サイズ(セル数の一辺)。 */
         const val GRID = 32
+
+        /** 追従セルの選択条件: 1フレーム前との Y 差の絶対値がこの値以上で最大のセル。 */
+        const val TRACK_MIN_DELTA = 200f
+
+        /** 選んだセルを動かさないフレーム数(その後、選び直す)。 */
+        const val TRACK_LOCK_FRAMES = 8
 
         /** 差分表示の強調倍率(Y の差を [DIFF_GAIN] 倍して 128 を中心に描く)。 */
         const val DIFF_GAIN = 4f
