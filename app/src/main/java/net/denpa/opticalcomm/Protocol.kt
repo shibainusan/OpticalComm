@@ -11,30 +11,39 @@ const val MAX_PAYLOAD_BYTES = 64
 private const val PREAMBLE_BYTE = 0xAA
 private const val SYNC_BYTE = 0x7E
 
-object Crc8 {
-    fun compute(data: ByteArray, init: Int = 0): Int {
-        var crc = init and 0xFF
-        for (b in data) {
-            crc = crc xor (b.toInt() and 0xFF)
-            repeat(8) {
-                crc = if (crc and 0x80 != 0) ((crc shl 1) xor 0x07) and 0xFF else (crc shl 1) and 0xFF
+/** CRC-4(多項式 x^4+x+1 = 0x3、初期値 0、MSB first)。シーケンス番号も計算に含める。 */
+object Crc4 {
+    fun compute(data: ByteArray, sn: Int): Int {
+        var crc = 0
+        fun feed(b: Int) {
+            for (i in 7 downTo 0) {
+                val top = (crc shr 3) and 1
+                val inBit = (b shr i) and 1
+                crc = (crc shl 1) and 0xF
+                if (top xor inBit == 1) crc = crc xor 0x3
             }
         }
+        for (b in data) feed(b.toInt() and 0xFF)
+        feed(sn and 0xF)
         return crc
     }
 }
 
+/** シーケンス番号は 4bit(0..15)。 */
+const val SN_MASK = 0xF
+
 object Frame {
     /**
-     * フレーム: AA AA 7E LEN PAYLOAD CRC8(LEN+PAYLOAD)。MSB first。
+     * フレーム: AA AA 7E LEN PAYLOAD LAST。MSB first。LAST は上位4bitがシーケンス番号 [sn]、
+     * 下位4bitが CRC4(LEN+PAYLOAD+SN)。
      * [crcCorruption] はテスト用に CRC を意図的にずらす。
      */
-    fun encode(text: String, crcCorruption: Int = 0): List<Boolean> {
+    fun encode(text: String, sn: Int = 0, crcCorruption: Int = 0): List<Boolean> {
         val payload = text.toByteArray(Charsets.UTF_8)
         require(payload.size <= MAX_PAYLOAD_BYTES) { "too long" }
         val body = byteArrayOf(payload.size.toByte()) + payload
         val bytes = byteArrayOf(PREAMBLE_BYTE.toByte(), PREAMBLE_BYTE.toByte(), SYNC_BYTE.toByte()) +
-            body + byteArrayOf((Crc8.compute(body) xor crcCorruption).toByte())
+            body + byteArrayOf((((sn and SN_MASK) shl 4) or ((Crc4.compute(body, sn and SN_MASK) xor crcCorruption) and 0xF)).toByte())
         val bits = ArrayList<Boolean>(bytes.size * 8)
         for (b in bytes) for (i in 7 downTo 0) bits.add((b.toInt() shr i) and 1 == 1)
         return bits
@@ -47,10 +56,10 @@ sealed interface DecodeEvent {
     /** プリアンブル+SYNC を検出した。 */
     data object PreambleOk : DecodeEvent
     data class PreambleFail(val reason: String) : DecodeEvent
-    /** CRC が一致した場合のみ。 */
-    data class Message(val text: String) : DecodeEvent
-    /** CRC 不一致。LEN 分は受信し続けるので、化けた [text] も得られる。 */
-    data class CrcError(val length: Int, val text: String) : DecodeEvent
+    /** CRC が一致した場合のみ。[sn] は受信したシーケンス番号。 */
+    data class Message(val text: String, val sn: Int = 0) : DecodeEvent
+    /** CRC 不一致。LEN 分は受信し続けるので、化けた [text] や [sn] も得られる。 */
+    data class CrcError(val length: Int, val text: String, val sn: Int = 0) : DecodeEvent
 }
 
 enum class DecoderState { HUNT, LENGTH, PAYLOAD, CRC }
@@ -158,11 +167,12 @@ class BitStreamDecoder {
             }
             DecoderState.CRC -> {
                 val data = payload.toByteArray()
-                val crc = Crc8.compute(byteArrayOf(length.toByte()) + data)
+                val sn = (byte shr 4) and SN_MASK
+                val crc = Crc4.compute(byteArrayOf(length.toByte()) + data, sn)
                 val len = length
                 val text = String(data, Charsets.UTF_8)
                 reset()
-                return if (crc == byte) DecodeEvent.Message(text) else DecodeEvent.CrcError(len, text)
+                return if (crc == (byte and 0xF)) DecodeEvent.Message(text, sn) else DecodeEvent.CrcError(len, text, sn)
             }
             DecoderState.HUNT -> Unit
         }

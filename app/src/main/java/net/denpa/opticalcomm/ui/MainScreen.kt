@@ -90,7 +90,7 @@ private fun SendSection(vm: SenderViewModel, s: SenderUiState) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = vm::cancel) { Text("中止") }
-                Text("送信中 ${s.progress}/${s.total} bit")
+                Text("送信中 SN=${s.sn} ${s.progress}/${s.total} bit")
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

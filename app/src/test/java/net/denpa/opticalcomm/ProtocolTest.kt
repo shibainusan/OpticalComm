@@ -34,7 +34,7 @@ class ProtocolTest {
         val d = BitStreamDecoder()
         val bytes = Frame.encode("Hi").mapNotNull { b -> d.push(b); d.lastByte.takeIf { it >= 0 } }
         val body = byteArrayOf(2, 'H'.code.toByte(), 'i'.code.toByte())
-        assertEquals(listOf(2, 'H'.code, 'i'.code, Crc8.compute(body)), bytes)
+        assertEquals(listOf(2, 'H'.code, 'i'.code, Crc4.compute(body, 0)), bytes)
     }
 
     @Test
@@ -236,5 +236,19 @@ class ProtocolTest {
         slicer.frozen = false
         feed(250f, 5)
         assertTrue(slicer.threshold != before)
+    }
+
+    @Test
+    fun sequenceNumberRoundTripsAndIsCoveredByCrc() {
+        for (sn in 0..15) {
+            val ev = decodeAll(Frame.encode("a", sn))
+            assertEquals(listOf<DecodeEvent>(DecodeEvent.Message("a", sn)), ev)
+        }
+        // SN のビット(最後のバイトの上位4bit)が化けると、CRC 不一致になり、化けた SN が見える
+        val bits = Frame.encode("a", 5).toMutableList()
+        val lastByteStart = bits.size - 8
+        bits[lastByteStart] = !bits[lastByteStart]
+        val ev = decodeAll(bits).single()
+        assertEquals(DecodeEvent.CrcError(1, "a", 5 xor 8), ev)
     }
 }

@@ -16,11 +16,14 @@ data class SenderUiState(
     val progress: Int = 0,
     val total: Int = 0,
     val error: String? = null,
+    /** 送信中のフレームのシーケンス番号(0..15)。 */
+    val sn: Int = 0,
 )
 
 class SenderViewModel(app: Application) : AndroidViewModel(app) {
     private val sender = TorchSender(app)
     private var job: Job? = null
+    private var nextSn = 0
     private val _state = MutableStateFlow(
         SenderUiState(error = if (sender.available) null else "フラッシュ付きカメラがありません")
     )
@@ -32,8 +35,10 @@ class SenderViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = SenderUiState(error = "長すぎます(UTF-8で最大${MAX_PAYLOAD_BYTES}バイト)")
             return
         }
-        val bits = Frame.encode(text)
-        _state.value = SenderUiState(sending = true, total = bits.size)
+        val sn = nextSn
+        nextSn = (nextSn + 1) and SN_MASK
+        val bits = Frame.encode(text, sn)
+        _state.value = SenderUiState(sending = true, total = bits.size, sn = sn)
         job = viewModelScope.launch {
             try {
                 sender.send(bits) { p -> _state.update { it.copy(progress = p) } }
@@ -110,22 +115,26 @@ class ReceiverViewModel : ViewModel() {
                 // 同期前の失敗は行を確定させず、リングの更新を続ける。フレーム中(LEN不正)だけ行を閉じる
                 is DecodeEvent.PreambleFail -> if (inFrame) endLine("←失敗(${ev.reason})")
                 is DecodeEvent.Message -> {
-                    endLine("←CRC OK")
-                    log.add("受信: ${ev.text}")
+                    endLine("←CRC OK SN=${ev.sn}")
+                    log.add("受信(SN=${ev.sn}): ${ev.text}")
                 }
                 is DecodeEvent.CrcError -> {
-                    endLine("←NG(len=${ev.length}, CRC不一致)")
-                    log.add("受信(エラー): ${ev.text}")
+                    endLine("←NG(len=${ev.length}, CRC不一致, SN=${ev.sn})")
+                    log.add("受信(エラー, SN=${ev.sn}): ${ev.text}")
                 }
                 null -> Unit
             }
         }
     }
 
-    private fun currentLine(): String =
+    /** 注釈を付ける前の、ビット/HEX だけの行。確定する行はこれに結果の注釈を付ける。 */
+    private fun baseLine(): String =
         if (inFrame) (hexTokens + listOfNotNull(partial.takeIf { it.isNotEmpty() }?.toString())).joinToString(" ")
-        else if (decoder.active) "${groupFromEnd(ring)} ←プリアンブル受信中"
         else groupFromEnd(ring)
+
+    /** 表示中の行。プリアンブルを探している間だけ「受信中」を添える(確定時は成功/失敗の注釈に置き換える)。 */
+    private fun currentLine(): String =
+        if (!inFrame && decoder.active) "${baseLine()} ←プリアンブル受信中" else baseLine()
 
     /** 最新ビット(末尾)を基準に8bit区切りにする。リングが流れても区切り位置が末尾に揃う。 */
     private fun groupFromEnd(raw: CharSequence): String {
@@ -140,7 +149,7 @@ class ReceiverViewModel : ViewModel() {
     }
 
     private fun endLine(note: String) {
-        bitLines.add("${currentLine()} $note")
+        bitLines.add("${baseLine()} $note")
         if (bitLines.size > 40) bitLines.removeAt(0)
         clearCurrent()
     }
