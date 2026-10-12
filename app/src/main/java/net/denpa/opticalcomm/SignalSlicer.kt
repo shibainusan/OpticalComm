@@ -24,13 +24,21 @@ class SignalSlicer(
     private var nextCenter = 0L
     private var rebased = false
 
+    /**
+     * true の間は hi/lo(= しきい値)を更新せず固定する。プリアンブル受信成功からフレーム終了までの間、
+     * ペイロード中に基準が動かないようにするために使う。[reset] で解除される。
+     */
+    var frozen = false
+
     fun reset() {
         initialized = false
         level = false
+        frozen = false
     }
 
     /** 参照領域が変わって輝度の基準が飛んだときに、ピーク追従値を新しい領域のものへ差し替える。ビット格子はそのまま。 */
     fun rebase(hi: Float, lo: Float) {
+        if (frozen) return
         this.hi = hi
         this.lo = lo
         rebased = true
@@ -46,10 +54,12 @@ class SignalSlicer(
             nextCenter = t + bitNanos / 2
             return
         }
-        // ピーク追従(ゆっくり減衰)
-        val k = 0.002f
-        hi = if (lum > hi) lum else hi - (hi - lo) * k
-        lo = if (lum < lo) lum else lo + (hi - lo) * k
+        // ピーク追従(ゆっくり減衰)。frozen の間はしきい値を固定する
+        if (!frozen) {
+            val k = 0.002f
+            hi = if (lum > hi) lum else hi - (hi - lo) * k
+            lo = if (lum < lo) lum else lo + (hi - lo) * k
+        }
 
         val range = hi - lo
         val newLevel = if (range < minContrast) false else {

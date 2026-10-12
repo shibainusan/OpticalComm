@@ -57,6 +57,8 @@ data class ReceiverUiState(
     val threshold: Float = 0f,
     val level: Boolean = false,
     val decoderState: DecoderState = DecoderState.HUNT,
+    /** 点灯を検出してプリアンブルを探している間 true(HUNT のうち、点灯検出前は false)。 */
+    val preambleActive: Boolean = false,
     val log: List<String> = emptyList(),
     /** 受信ビット(8bit区切り)と判定結果の注釈。確定済みの行。 */
     val bitLines: List<String> = emptyList(),
@@ -85,8 +87,10 @@ class ReceiverViewModel : ViewModel() {
     val state: StateFlow<ReceiverUiState> = _state
     private val window = ArrayDeque<Float>()
 
-    private val slicer = SignalSlicer { bit ->
+    private val slicer: SignalSlicer = SignalSlicer { bit ->
         val ev = decoder.push(bit)
+        // プリアンブル受信成功(以降 HUNT 以外)からフレーム終了までは、しきい値を固定する
+        slicer.frozen = decoder.state != DecoderState.HUNT
         synchronized(log) {
             if (inFrame) {
                 partial.append(if (bit) '1' else '0')
@@ -174,6 +178,7 @@ class ReceiverViewModel : ViewModel() {
                 threshold = slicer.threshold,
                 level = slicer.level,
                 decoderState = decoder.state,
+                preambleActive = decoder.active,
                 log = log.toList(),
                 bitLines = bitLines.toList(),
                 currentBits = currentLine(),

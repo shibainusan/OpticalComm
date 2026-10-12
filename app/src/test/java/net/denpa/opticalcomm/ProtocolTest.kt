@@ -221,4 +221,20 @@ class ProtocolTest {
         assertEquals(7, selectedAtEnd)
         assertEquals(0, changesInLast60)
     }
+
+    @Test
+    fun frozenSlicerKeepsThreshold() {
+        val slicer = SignalSlicer { }
+        var t = 0L
+        fun feed(lum: Float, frames: Int) { repeat(frames) { slicer.push(t, lum); t += 33_333_333L } }
+        repeat(6) { feed(40f, 2); feed(200f, 2) }
+        val before = slicer.threshold
+        slicer.frozen = true
+        // 凍結中に、明るさの基準が大きく変わっても、しきい値は動かない
+        repeat(6) { feed(100f, 2); feed(250f, 2) }
+        assertEquals(before, slicer.threshold, 0f)
+        slicer.frozen = false
+        feed(250f, 5)
+        assertTrue(slicer.threshold != before)
+    }
 }

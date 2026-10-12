@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import net.denpa.opticalcomm.DecoderState
 import net.denpa.opticalcomm.LightReceiver
 import net.denpa.opticalcomm.MAX_PAYLOAD_BYTES
 import net.denpa.opticalcomm.ReceiverViewModel
@@ -166,7 +167,7 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
                 Text(if (aeLocked) "AEロック中(解除)" else "AE解除中(ロック)")
             }
         }
-        Text(if (paused) "送信中のため受信停止" else "信号: ${if (s.level) "ON" else "OFF"} / 状態: ${s.decoderState}${s.frame?.let { " / 解析 ${it.imageWidth}x${it.imageHeight}" } ?: ""}")
+        Text(if (paused) "送信中のため受信停止" else "信号: ${if (s.level) "ON" else "OFF"} / 状態: ${stateLabel(s.decoderState, s.preambleActive)}${s.frame?.let { " / 解析 ${it.imageWidth}x${it.imageHeight}" } ?: ""}")
         s.frame?.let {
             Text("追跡セル(ΔY最大) Y=%.0f U=%.1f V=%.1f ΔY=%+.1f (最大|ΔY|=%.1f)".format(it.roiY, it.roiU, it.roiV, it.roiDiff, it.maxAbsDiff), fontFamily = FontFamily.Monospace, fontSize = 12.sp)
         }
@@ -200,3 +201,7 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
         }
     }
 }
+
+/** 状態表示。点灯検出前は idle、プリアンブルを探している間は hunt、同期後は LENGTH/PAYLOAD/CRC。 */
+private fun stateLabel(state: DecoderState, preambleActive: Boolean): String =
+    if (state == DecoderState.HUNT) (if (preambleActive) "hunt" else "idle") else state.name
