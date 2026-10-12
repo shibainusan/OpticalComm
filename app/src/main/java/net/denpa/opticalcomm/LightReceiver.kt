@@ -247,10 +247,10 @@ class LightReceiver(private val context: Context) {
         const val GRID = 32
 
         /** 追従セルの選択条件: 1フレーム前との Y 差の絶対値がこの値以上で最大のセル。 */
-        const val TRACK_MIN_DELTA = 200f
+        const val TRACK_MIN_DELTA = 50f
 
         /** 選んだセルを動かさないフレーム数(その後、選び直す)。 */
-        const val TRACK_LOCK_FRAMES = 8
+        const val TRACK_LOCK_FRAMES = 4
 
         /** 差分表示の強調倍率(Y の差を [DIFF_GAIN] 倍して 128 を中心に描く)。 */
         const val DIFF_GAIN = 4f

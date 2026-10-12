@@ -198,7 +198,7 @@ class ProtocolTest {
         val n = 6
         val values = FloatArray(n) { 100f }
         val diffs = FloatArray(n)
-        val t = DeltaTracker(n)
+        val t = DeltaTracker(n, minDelta = 200f, lockFrames = 8)
         // 条件(|ΔY|>=200)を満たすセルが無い間は、全体平均のまま
         diffs[1] = 150f
         t.update(values, diffs, 100f)
