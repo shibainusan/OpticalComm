@@ -62,8 +62,6 @@ data class ReceiverUiState(
     val threshold: Float = 0f,
     val level: Boolean = false,
     val decoderState: DecoderState = DecoderState.HUNT,
-    /** 点灯を検出してプリアンブルを探している間 true(HUNT のうち、点灯検出前は false)。 */
-    val preambleActive: Boolean = false,
     val log: List<String> = emptyList(),
     /** 受信ビット(8bit区切り)と判定結果の注釈。確定済みの行。 */
     val bitLines: List<String> = emptyList(),
@@ -132,9 +130,9 @@ class ReceiverViewModel : ViewModel() {
         if (inFrame) (hexTokens + listOfNotNull(partial.takeIf { it.isNotEmpty() }?.toString())).joinToString(" ")
         else groupFromEnd(ring)
 
-    /** 表示中の行。プリアンブルを探している間だけ「受信中」を添える(確定時は成功/失敗の注釈に置き換える)。 */
+    /** 表示中の行。フレーム前(プリアンブルを探している間)は常に「受信中」を添える(確定時は成功/失敗の注釈に置き換える)。 */
     private fun currentLine(): String =
-        if (!inFrame && decoder.active) "${baseLine()} ←プリアンブル受信中" else baseLine()
+        if (!inFrame) "${baseLine()} ←プリアンブル受信中" else baseLine()
 
     /** 最新ビット(末尾)を基準に8bit区切りにする。リングが流れても区切り位置が末尾に揃う。 */
     private fun groupFromEnd(raw: CharSequence): String {
@@ -187,7 +185,6 @@ class ReceiverViewModel : ViewModel() {
                 threshold = slicer.threshold,
                 level = slicer.level,
                 decoderState = decoder.state,
-                preambleActive = decoder.active,
                 log = log.toList(),
                 bitLines = bitLines.toList(),
                 currentBits = currentLine(),

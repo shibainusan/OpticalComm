@@ -22,11 +22,9 @@ class ProtocolTest {
     }
 
     @Test
-    fun reportsPreambleFailForNoise() {
+    fun noiseNeverSyncsOrReportsEvents() {
         val noise = List(10) { false } + List(60) { it % 3 != 0 }
-        val ev = decodeAllEvents(noise)
-        assertTrue(ev.any { it is DecodeEvent.PreambleFail })
-        assertTrue(ev.none { it is DecodeEvent.PreambleOk })
+        assertEquals(emptyList<DecodeEvent>(), decodeAllEvents(noise))
     }
 
     @Test

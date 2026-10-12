@@ -64,12 +64,6 @@ sealed interface DecodeEvent {
 
 enum class DecoderState { HUNT, LENGTH, PAYLOAD, CRC }
 
-/** 消灯がこの bit 数続いた後の最初の点灯を、フレーム開始候補とみなす。 */
-private const val ARM_ZEROS = 8
-
-/** 点灯を検出してからこの bit 数以内にプリアンブル+SYNC (24bit) が揃わなければ失敗とする。 */
-private const val HUNT_LIMIT_BITS = 48
-
 /** 同期判定には末尾2バイト(AA 7E)の16bitを使う。先頭の AA は直前の消灯との境目で欠けやすいため要求しない。 */
 private const val SYNC_BITS = 16
 private const val SYNC_MASK = (1 shl SYNC_BITS) - 1
@@ -80,35 +74,25 @@ class BitStreamDecoder {
     var state = DecoderState.HUNT
         private set
 
-    /** 点灯を検出してプリアンブルを探している間、または復号中は true。UI でビット表示するかの判断に使う。 */
-    var active = false
-        private set
-
     /** 直近の push で8bitが揃ったらそのバイト値、そうでなければ -1。 */
     var lastByte = -1
         private set
 
-    private var zeroRun = ARM_ZEROS
-    private var huntBits = 0
     private var window = 0
     private var cur = 0
     private var curBits = 0
     private var length = 0
     private val payload = java.io.ByteArrayOutputStream()
 
-    /** フレーム終了後など。次の点灯をすぐ候補にできる。 */
+    /** フレーム終了後など。同期の窓をクリアして、次のプリアンブルの探索に戻る。 */
     fun reset() = resetTo(rearmed = true)
 
     /**
-     * 失敗時(rearmed=false)もビット窓は捨てない。ノイズで早く点灯検出して失敗扱いになっても、
+     * 失敗時(rearmed=false)もビット窓は捨てない。LEN 不正で失敗扱いになっても、
      * 直後に本物のプリアンブルが来れば、そのビットを取りこぼさず同期できるようにする。
      */
     private fun resetTo(rearmed: Boolean) {
         state = DecoderState.HUNT
-        active = false
-        // 失敗後も次の点灯をすぐ検出できるようにする(0を8個待つと、ノイズ下で2回目以降の「受信中」が出なくなる)
-        zeroRun = ARM_ZEROS
-        huntBits = 0
         if (rearmed) window = 0
         cur = 0
         curBits = 0
@@ -119,30 +103,14 @@ class BitStreamDecoder {
         lastByte = -1
         val v = if (bit) 1 else 0
         if (state == DecoderState.HUNT) {
-            // 点灯検出より前のビットも含めて常に窓へ入れる
+            // 起動直後から常に窓へ入れて同期パターンを探す(点灯の検出を待たない)
             window = ((window shl 1) or v) and SYNC_MASK
-            if (!active) {
-                if (!bit) {
-                    zeroRun++
-                } else if (zeroRun >= ARM_ZEROS) {
-                    active = true
-                    huntBits = 0
-                } else {
-                    zeroRun = 0
-                }
-            }
-            if (active) huntBits++
             if (window == SYNC_VALUE) {
-                active = true
                 state = DecoderState.LENGTH
                 cur = 0
                 curBits = 0
                 payload.reset()
                 return DecodeEvent.PreambleOk
-            }
-            if (active && huntBits >= HUNT_LIMIT_BITS) {
-                resetTo(rearmed = false)
-                return DecodeEvent.PreambleFail("SYNC(AA AA 7E)が見つからない")
             }
             return null
         }
