@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -94,7 +95,8 @@ private fun SendSection(vm: SenderViewModel, s: SenderUiState) {
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { vm.send(text) }, enabled = text.isNotEmpty()) { Text("送信") }
+                // 標準の幅(約76dp)の2倍
+                Button(onClick = { vm.send(text) }, enabled = text.isNotEmpty(), modifier = Modifier.width(152.dp)) { Text("送信") }
                 Text("背面のライトを相手のカメラへ", style = MaterialTheme.typography.bodySmall)
             }
         }

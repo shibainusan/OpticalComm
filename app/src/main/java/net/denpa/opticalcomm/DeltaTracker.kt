@@ -12,7 +12,7 @@ import kotlin.math.abs
 class DeltaTracker(
     private val count: Int,
     private val minDelta: Float = 50f,
-    private val lockFrames: Int = 4,
+    private val lockFrames: Int = 8,
     private val valueDecay: Float = 0.01f,
 ) {
     private val n = count + 1
