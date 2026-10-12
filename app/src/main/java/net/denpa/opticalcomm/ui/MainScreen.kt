@@ -145,7 +145,7 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
             TextButton(onClick = vm::clearLog) { Text("履歴消去") }
             TextButton(onClick = { showDiff = !showDiff }) { Text(if (showDiff) "表示:差分" else "表示:輝度") }
             TextButton(onClick = { receiver.setAeLocked(!aeLocked) }, enabled = !paused) {
-                Text(if (aeLocked) "AEロック中(解除)" else "AE解除中(ロック)")
+                Text(if (aeLocked) "AE無効" else "AE有効")
             }
         }
         Text(if (paused) "送信中のため受信停止" else "信号: ${if (s.level) "ON" else "OFF"} / 状態: ${s.decoderState}${s.frame?.let { " / 解析 ${it.imageWidth}x${it.imageHeight}" } ?: ""}")

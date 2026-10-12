@@ -2,8 +2,6 @@ package net.denpa.opticalcomm
 
 import android.content.Context
 import android.hardware.camera2.CaptureRequest
-import android.os.Handler
-import android.os.Looper
 import android.util.Range
 import android.util.Size
 import androidx.camera.camera2.interop.Camera2CameraControl
@@ -25,8 +23,6 @@ class LightReceiver(private val context: Context) {
     private var executor: ExecutorService? = null
     private var camera: Camera? = null
     private var stopped = false
-    private val handler = Handler(Looper.getMainLooper())
-    private var autoLock: Runnable? = null
     private var onAeLock: (Boolean) -> Unit = {}
     /** ΔY の大きいセルを追従する(トラッキング対象)。 */
     private val tracker = DeltaTracker(GRID * GRID, minDelta = TRACK_MIN_DELTA, lockFrames = TRACK_LOCK_FRAMES)
@@ -96,20 +92,13 @@ class LightReceiver(private val context: Context) {
             p.unbindAll()
             camera = p.bindToLifecycle(owner, selector, analysis)
             setExposureCompensation(EXPOSURE_COMP_EV)
-            // AE が点滅を打ち消さないよう、起動から AE_LOCK_DELAY_MS 後(ライトを向ける時間を見込む)に自動でロックする。
-            // それまでに手動で操作した場合は、自動ロックはしない。
+            // AE/AWB は既定で有効(ロックしない)。点滅を AE が打ち消すときは、受信欄のボタンで無効(ロック)にする
             onAeLock(false)
-            cancelAutoLock()
-            autoLock = Runnable {
-                autoLock = null
-                if (!stopped) setAeLocked(true)
-            }.also { handler.postDelayed(it, AE_LOCK_DELAY_MS) }
         }, ContextCompat.getMainExecutor(context))
     }
 
     fun stop() {
         stopped = true
-        cancelAutoLock()
         provider?.unbindAll()
         provider = null
         camera = null
@@ -128,14 +117,8 @@ class LightReceiver(private val context: Context) {
         cam.cameraControl.setExposureCompensationIndex(index)
     }
 
-    private fun cancelAutoLock() {
-        autoLock?.let { handler.removeCallbacks(it) }
-        autoLock = null
-    }
-
-    /** AE/AWB をロック/解除する(メインスレッドから)。自動ロックの予定があれば取り消す。 */
+    /** AE/AWB をロック(= AE 無効)/解除(= AE 有効)する(メインスレッドから)。 */
     fun setAeLocked(lock: Boolean) {
-        cancelAutoLock()
         if (camera == null) return
         setAeLock(lock)
         onAeLock(lock)
@@ -277,8 +260,5 @@ class LightReceiver(private val context: Context) {
 
         /** 露出補正(EV)。環境光を暗くしてトーチ点との差を広げる。 */
         const val EXPOSURE_COMP_EV = -2f
-
-        /** 起動からこの時間後に AE/AWB を自動ロックする。 */
-        const val AE_LOCK_DELAY_MS = 3000L
     }
 }
