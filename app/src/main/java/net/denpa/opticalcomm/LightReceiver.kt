@@ -28,9 +28,15 @@ class LightReceiver(private val context: Context) {
     private val handler = Handler(Looper.getMainLooper())
     private var autoLock: Runnable? = null
     private var onAeLock: (Boolean) -> Unit = {}
-    private val roi = RoiTracker(GRID * GRID, decay = ROI_DECAY, minSwitchContrast = ROI_MIN_CONTRAST)
+    /** ΔY の大きいセルを追従する(トラッキング対象)。 */
+    private val tracker = DeltaTracker(GRID * GRID)
     private val cellMean = FloatArray(GRID * GRID)
     private val sums = IntArray(GRID * GRID)
+
+    /** 1フレーム前のセル平均と、そこからの差分(今回 - 前回)。最初のフレームは差分 0。 */
+    private val prevMean = FloatArray(GRID * GRID)
+    private val diffMean = FloatArray(GRID * GRID)
+    private var hasPrev = false
 
     // 解析画像のサイズが変わったときだけ作り直す下ごしらえ
     private var lastW = 0
@@ -54,8 +60,9 @@ class LightReceiver(private val context: Context) {
         onAeLock: (Boolean) -> Unit = {},
     ) {
         stopped = false
+        hasPrev = false
+        tracker.reset()
         this.onAeLock = onAeLock
-        roi.reset()
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             if (stopped) return@addListener
@@ -71,7 +78,7 @@ class LightReceiver(private val context: Context) {
             val analysis = analysisBuilder.build()
             analysis.setAnalyzer(exec) { image ->
                 val lum = brightness(image)
-                if (roi.switched) onRebase(roi.selectedHi, roi.selectedLo)
+                if (tracker.switched) onRebase(tracker.selectedHi, tracker.selectedLo)
                 onSample(image.imageInfo.timestamp, lum)
                 onFrame(debugFrame(image, front))
                 image.close()
@@ -137,9 +144,8 @@ class LightReceiver(private val context: Context) {
     }
 
     /**
-     * 解析画像を [GRID]x[GRID] のセルに縮小(各セルは平均輝度)し、点滅の振れ幅が最大のセルの輝度([RoiTracker])を返す。
+     * 解析画像を [GRID]x[GRID] のセルに縮小(各セルは平均輝度)し、1フレーム前との差(ΔY)が大きいセル([DeltaTracker])の輝度を返す。
      * 遠くのトーチは数ピクセルにしか映らないため、全体平均では点滅が埋もれる。
-     * 上位1%などのピーク指標は、白飛びした照明が常時最大値になり変化を拾えない。
      */
     private fun brightness(image: ImageProxy): Float {
         val plane = image.planes[0]
@@ -162,15 +168,43 @@ class LightReceiver(private val context: Context) {
             val base = (y * GRID / h) * GRID
             for (x in 0 until w) sums[base + colIdx[x]] += rowBytes[x].toInt() and 0xFF
         }
-        var total = 0L
         for (r in 0 until GRID) {
             for (c in 0 until GRID) {
                 val i = r * GRID + c
-                total += sums[i]
                 cellMean[i] = sums[i].toFloat() / (colCount[c] * rowCount[r])
             }
         }
-        return roi.update(cellMean, total.toFloat() / (w * h))
+        for (i in cellMean.indices) diffMean[i] = if (hasPrev) cellMean[i] - prevMean[i] else 0f
+        cellMean.copyInto(prevMean)
+        hasPrev = true
+        return tracker.update(cellMean, diffMean)
+    }
+
+    /** セル [cell] に対応する範囲の U/V の平均(U/V プレーンは輝度の半分の解像度)。プレーンが無ければ無彩色(128)。 */
+    private fun cellChroma(image: ImageProxy, cell: Int): Pair<Float, Float> {
+        if (image.planes.size < 3) return 128f to 128f
+        val cw = image.width / 2
+        val ch = image.height / 2
+        val c = cell % GRID
+        val r = cell / GRID
+        val x0 = c * cw / GRID
+        val x1 = maxOf(x0 + 1, (c + 1) * cw / GRID)
+        val y0 = r * ch / GRID
+        val y1 = maxOf(y0 + 1, (r + 1) * ch / GRID)
+        fun mean(i: Int): Float {
+            val pl = image.planes[i]
+            val buf = pl.buffer
+            var sum = 0
+            var n = 0
+            for (y in y0 until y1) {
+                for (x in x0 until x1) {
+                    val pos = y * pl.rowStride + x * pl.pixelStride
+                    if (pos < buf.limit()) { sum += buf.get(pos).toInt() and 0xFF; n++ }
+                }
+            }
+            return if (n > 0) sum.toFloat() / n else 128f
+        }
+        return mean(1) to mean(2)
     }
 
     /** 縮小画像を表示向きのグレースケールにし、トラッキング中のセル位置を添えて返す(表示は最小〜最大に引き伸ばす)。 */
@@ -181,32 +215,36 @@ class LightReceiver(private val context: Context) {
         val scale = 255f / maxOf(hi - lo, 1f)
         val rot = image.imageInfo.rotationDegrees
         val pixels = IntArray(GRID * GRID)
+        val diffPixels = IntArray(GRID * GRID)
+        var maxAbs = 0f
         for (r in 0 until GRID) {
             for (c in 0 until GRID) {
                 val g = ((cellMean[r * GRID + c] - lo) * scale).toInt().coerceIn(0, 255)
                 val (dc, dr) = toDisplayCell(c, r, GRID, rot, mirror)
                 pixels[dr * GRID + dc] = (0xFF shl 24) or (g shl 16) or (g shl 8) or g
+                val d = diffMean[r * GRID + c]
+                val dg = (128f + d * DIFF_GAIN).toInt().coerceIn(0, 255)
+                diffPixels[dr * GRID + dc] = (0xFF shl 24) or (dg shl 16) or (dg shl 8) or dg
+                if (kotlin.math.abs(d) > maxAbs) maxAbs = kotlin.math.abs(d)
             }
         }
-        val sel = roi.selected
-        val (rc, rr) = if (sel >= GRID * GRID) (-1 to -1) else toDisplayCell(sel % GRID, sel / GRID, GRID, rot, mirror)
-        return DebugFrame(pixels, GRID, rc, rr, image.width, image.height)
+        val sel = tracker.selected
+        val (rc, rr) = toDisplayCell(sel % GRID, sel / GRID, GRID, rot, mirror)
+        val (u, v) = cellChroma(image, sel)
+        return DebugFrame(pixels, GRID, rc, rr, image.width, image.height, cellMean[sel], u, v, diffPixels, diffMean[sel], maxAbs)
     }
 
     private companion object {
         /** 解析画像の縮小サイズ(セル数の一辺)。 */
         const val GRID = 32
 
+        /** 差分表示の強調倍率(Y の差を [DIFF_GAIN] 倍して 128 を中心に描く)。 */
+        const val DIFF_GAIN = 4f
+
         /** 露出補正(EV)。環境光を暗くしてトーチ点との差を広げる。 */
         const val EXPOSURE_COMP_EV = -2f
 
         /** 起動からこの時間後に AE/AWB を自動ロックする。 */
         const val AE_LOCK_DELAY_MS = 3000L
-
-        /** セルの振れ幅の減衰(1フレームあたり)。AE の整定などで付いた古い振れ幅が長く残らないようにする。 */
-        const val ROI_DECAY = 0.01f
-
-        /** この振れ幅未満のセルへは乗り換えない(ノイズ対策)。 */
-        const val ROI_MIN_CONTRAST = 8f
     }
 }

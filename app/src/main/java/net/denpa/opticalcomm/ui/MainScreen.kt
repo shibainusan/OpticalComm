@@ -108,6 +108,7 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
     val owner = LocalLifecycleOwner.current
     var front by rememberSaveable { mutableStateOf(false) }
     var aeLocked by remember { mutableStateOf(false) }
+    var showDiff by remember { mutableStateOf(true) }
     val receiver = remember { LightReceiver(context) }
 
     DisposableEffect(front, paused) {
@@ -129,8 +130,9 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
         Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
             val f = s.frame
             if (f != null) {
-                val bitmap = remember(f) {
-                    Bitmap.createBitmap(f.pixels, f.size, f.size, Bitmap.Config.ARGB_8888).asImageBitmap()
+                val bitmap = remember(f, showDiff) {
+                    Bitmap.createBitmap(if (showDiff) f.diffPixels else f.pixels, f.size, f.size, Bitmap.Config.ARGB_8888)
+                        .asImageBitmap()
                 }
                 Box(Modifier.fillMaxHeight().aspectRatio(1f)) {
                     Image(
@@ -159,11 +161,15 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { front = !front }) { Text(if (front) "前面カメラ" else "背面カメラ") }
             TextButton(onClick = vm::clearLog) { Text("履歴消去") }
+            TextButton(onClick = { showDiff = !showDiff }) { Text(if (showDiff) "表示:差分" else "表示:輝度") }
             TextButton(onClick = { receiver.setAeLocked(!aeLocked) }, enabled = !paused) {
                 Text(if (aeLocked) "AEロック中(解除)" else "AE解除中(ロック)")
             }
         }
         Text(if (paused) "送信中のため受信停止" else "信号: ${if (s.level) "ON" else "OFF"} / 状態: ${s.decoderState}${s.frame?.let { " / 解析 ${it.imageWidth}x${it.imageHeight}" } ?: ""}")
+        s.frame?.let {
+            Text("追跡セル(ΔY最大) Y=%.0f U=%.1f V=%.1f ΔY=%+.1f (最大|ΔY|=%.1f)".format(it.roiY, it.roiU, it.roiV, it.roiDiff, it.maxAbsDiff), fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        }
         Canvas(Modifier.fillMaxWidth().height(56.dp)) {
             val n = s.samples.size
             if (n > 1) {

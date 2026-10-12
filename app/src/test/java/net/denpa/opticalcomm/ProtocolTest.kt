@@ -194,4 +194,31 @@ class ProtocolTest {
         assertEquals(0 to 0, toDisplayCell(0, 0, 4, 90, true))
         assertEquals(3 to 0, toDisplayCell(0, 0, 4, 0, true))
     }
+
+    @Test
+    fun deltaTrackerFollowsBlinkingCellAndStaysPut() {
+        val rnd = Random(11)
+        val n = 40
+        val values = FloatArray(n)
+        val prev = FloatArray(n)
+        val diffs = FloatArray(n)
+        val t = DeltaTracker(n)
+        var selectedAtEnd = -1
+        var changesInLast60 = 0
+        var last = -1
+        for (f in 0 until 160) {
+            for (i in 0 until n) values[i] = 100f + (rnd.nextFloat() - 0.5f) * 2f
+            if ((f / 2) % 2 == 0) values[7] += 40f
+            for (i in 0 until n) diffs[i] = if (f == 0) 0f else values[i] - prev[i]
+            values.copyInto(prev)
+            t.update(values, diffs)
+            if (f >= 100) {
+                if (last != -1 && t.selected != last) changesInLast60++
+                last = t.selected
+            }
+            selectedAtEnd = t.selected
+        }
+        assertEquals(7, selectedAtEnd)
+        assertEquals(0, changesInLast60)
+    }
 }

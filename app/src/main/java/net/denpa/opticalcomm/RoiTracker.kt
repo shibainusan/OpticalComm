@@ -20,6 +20,15 @@ class DebugFrame(
     /** 元の解析画像の解像度。 */
     val imageWidth: Int,
     val imageHeight: Int,
+    /** トラッキング中セルの Y/U/V(0..255)。 */
+    val roiY: Float,
+    val roiU: Float,
+    val roiV: Float,
+    /** 1フレーム前との Y 差分の画像(128 が差なし、明るいほど増加、暗いほど減少。同じ向き)。 */
+    val diffPixels: IntArray,
+    /** トラッキング中セルの Y 差分(今回 - 前回)と、全セル中の最大絶対値。 */
+    val roiDiff: Float,
+    val maxAbsDiff: Float,
 )
 
 /**
