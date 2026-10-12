@@ -31,6 +31,13 @@ class LightReceiver(private val context: Context) {
     /** ΔY の大きいセルを追従する(トラッキング対象)。 */
     private val tracker = DeltaTracker(GRID * GRID, minDelta = TRACK_MIN_DELTA, lockFrames = TRACK_LOCK_FRAMES)
     private var overallMean = 0f
+
+    // U/V をセルへ縮小したもの(画像表示用)
+    private val uSums = IntArray(GRID * GRID)
+    private val vSums = IntArray(GRID * GRID)
+    private val cellU = FloatArray(GRID * GRID)
+    private val cellV = FloatArray(GRID * GRID)
+    private var chromaBytes = ByteArray(0)
     private val cellMean = FloatArray(GRID * GRID)
     private val sums = IntArray(GRID * GRID)
 
@@ -184,35 +191,47 @@ class LightReceiver(private val context: Context) {
         return tracker.update(cellMean, diffMean, overallMean)
     }
 
-    /** セル [cell] に対応する範囲の U/V の平均(U/V プレーンは輝度の半分の解像度)。プレーンが無ければ無彩色(128)。 */
-    private fun cellChroma(image: ImageProxy, cell: Int): Pair<Float, Float> {
-        if (image.planes.size < 3) return 128f to 128f
+    /**
+     * U/V プレーン(輝度の半分の解像度)も [GRID]x[GRID] のセルに縮小して cellU/cellV に入れる。
+     * プレーンが無い/形式が想定外のときは無彩色(128)にする。
+     */
+    private fun downscaleChroma(image: ImageProxy) {
+        cellU.fill(128f)
+        cellV.fill(128f)
+        if (image.planes.size < 3) return
         val cw = image.width / 2
         val ch = image.height / 2
-        val c = cell % GRID
-        val r = cell / GRID
-        val x0 = c * cw / GRID
-        val x1 = maxOf(x0 + 1, (c + 1) * cw / GRID)
-        val y0 = r * ch / GRID
-        val y1 = maxOf(y0 + 1, (r + 1) * ch / GRID)
-        fun mean(i: Int): Float {
+        if (cw == 0 || ch == 0) return
+        val colN = IntArray(GRID).also { for (x in 0 until cw) it[x * GRID / cw]++ }
+        val rowN = IntArray(GRID).also { for (y in 0 until ch) it[y * GRID / ch]++ }
+        fun plane(i: Int, sums: IntArray, out: FloatArray) {
             val pl = image.planes[i]
             val buf = pl.buffer
-            var sum = 0
-            var n = 0
-            for (y in y0 until y1) {
-                for (x in x0 until x1) {
-                    val pos = y * pl.rowStride + x * pl.pixelStride
-                    if (pos < buf.limit()) { sum += buf.get(pos).toInt() and 0xFF; n++ }
-                }
+            val ps = pl.pixelStride
+            val rs = pl.rowStride
+            val need = (cw - 1) * ps + 1
+            if (chromaBytes.size < need) chromaBytes = ByteArray(need)
+            sums.fill(0)
+            for (y in 0 until ch) {
+                val pos = y * rs
+                if (pos + need > buf.limit()) return
+                buf.position(pos)
+                buf.get(chromaBytes, 0, need)
+                val base = (y * GRID / ch) * GRID
+                for (x in 0 until cw) sums[base + x * GRID / cw] += chromaBytes[x * ps].toInt() and 0xFF
             }
-            return if (n > 0) sum.toFloat() / n else 128f
+            for (r in 0 until GRID) for (cc in 0 until GRID) {
+                val n = colN[cc] * rowN[r]
+                if (n > 0) out[r * GRID + cc] = sums[r * GRID + cc].toFloat() / n
+            }
         }
-        return mean(1) to mean(2)
+        plane(1, uSums, cellU)
+        plane(2, vSums, cellV)
     }
 
     /** 縮小画像を表示向きのグレースケールにし、トラッキング中のセル位置を添えて返す(表示は最小〜最大に引き伸ばす)。 */
     private fun debugFrame(image: ImageProxy, mirror: Boolean): DebugFrame {
+        downscaleChroma(image)
         var lo = Float.MAX_VALUE
         var hi = -Float.MAX_VALUE
         for (v in cellMean) { if (v < lo) lo = v; if (v > hi) hi = v }
@@ -220,12 +239,14 @@ class LightReceiver(private val context: Context) {
         val rot = image.imageInfo.rotationDegrees
         val pixels = IntArray(GRID * GRID)
         val diffPixels = IntArray(GRID * GRID)
+        val yuvPixels = IntArray(GRID * GRID)
         var maxAbs = 0f
         for (r in 0 until GRID) {
             for (c in 0 until GRID) {
                 val g = ((cellMean[r * GRID + c] - lo) * scale).toInt().coerceIn(0, 255)
                 val (dc, dr) = toDisplayCell(c, r, GRID, rot, mirror)
                 pixels[dr * GRID + dc] = (0xFF shl 24) or (g shl 16) or (g shl 8) or g
+                yuvPixels[dr * GRID + dc] = yuvToArgb(cellMean[r * GRID + c], cellU[r * GRID + c], cellV[r * GRID + c])
                 val d = diffMean[r * GRID + c]
                 val dg = (128f + d * DIFF_GAIN).toInt().coerceIn(0, 255)
                 diffPixels[dr * GRID + dc] = (0xFF shl 24) or (dg shl 16) or (dg shl 8) or dg
@@ -235,11 +256,10 @@ class LightReceiver(private val context: Context) {
         val sel = tracker.selected
         if (sel >= GRID * GRID) {
             // まだ条件を満たすセルが無く、全体平均を使っている
-            return DebugFrame(pixels, GRID, -1, -1, image.width, image.height, overallMean, Float.NaN, Float.NaN, diffPixels, Float.NaN, maxAbs)
+            return DebugFrame(pixels, GRID, -1, -1, image.width, image.height, overallMean, Float.NaN, Float.NaN, diffPixels, yuvPixels, Float.NaN, maxAbs)
         }
         val (rc, rr) = toDisplayCell(sel % GRID, sel / GRID, GRID, rot, mirror)
-        val (u, v) = cellChroma(image, sel)
-        return DebugFrame(pixels, GRID, rc, rr, image.width, image.height, cellMean[sel], u, v, diffPixels, diffMean[sel], maxAbs)
+        return DebugFrame(pixels, GRID, rc, rr, image.width, image.height, cellMean[sel], cellU[sel], cellV[sel], diffPixels, yuvPixels, diffMean[sel], maxAbs)
     }
 
     private companion object {

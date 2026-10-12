@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import net.denpa.opticalcomm.DebugFrame
 import net.denpa.opticalcomm.LightReceiver
 import net.denpa.opticalcomm.MAX_PAYLOAD_BYTES
 import net.denpa.opticalcomm.ReceiverViewModel
@@ -126,35 +127,16 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
     }
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        // 解析画像を 32x32 に縮小したもの(トラッキングが実際に見ている絵)を、プレビューの代わりに表示する
-        Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+        // 解析画像を 32x32 に縮小したもの(トラッキングが実際に見ている絵)を、プレビューの代わりに表示する。
+        // 左: 縮小後の YUV をカラーにした画像、右: 輝度/差分の切り替え。どちらも追跡セルを赤枠で示す
+        Row(Modifier.fillMaxWidth().height(160.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val f = s.frame
             if (f != null) {
-                val bitmap = remember(f, showDiff) {
-                    Bitmap.createBitmap(if (showDiff) f.diffPixels else f.pixels, f.size, f.size, Bitmap.Config.ARGB_8888)
-                        .asImageBitmap()
+                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    DebugImage(f, f.yuvPixels)
                 }
-                Box(Modifier.fillMaxHeight().aspectRatio(1f)) {
-                    Image(
-                        bitmap,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.FillBounds,
-                        filterQuality = FilterQuality.None,
-                    )
-                    // デバッグ用: トラッキング中のセルを赤枠で表示する(全体平均のときは画像全体)
-                    Canvas(Modifier.fillMaxSize()) {
-                        val cell = size.width / f.size
-                        if (f.roiCol < 0) {
-                            drawRect(Color.Red, style = Stroke(width = 3f))
-                        } else {
-                            // 1セルは小さいので、中心を合わせて最小 18px の枠にする
-                            val b = maxOf(cell * 3f, 18f)
-                            val cx = (f.roiCol + 0.5f) * cell
-                            val cy = (f.roiRow + 0.5f) * cell
-                            drawRect(Color.Red, topLeft = Offset(cx - b / 2f, cy - b / 2f), size = Size(b, b), style = Stroke(width = 3f))
-                        }
-                    }
+                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    DebugImage(f, if (showDiff) f.diffPixels else f.pixels)
                 }
             }
         }
@@ -201,6 +183,35 @@ private fun ReceiveSection(paused: Boolean, modifier: Modifier, vm: ReceiverView
         Text("受信メッセージ", style = MaterialTheme.typography.labelLarge)
         Column(Modifier.fillMaxWidth().height(72.dp).verticalScroll(rememberScrollState())) {
             s.log.asReversed().forEach { Text(it) }
+        }
+    }
+}
+
+/** 縮小画像([pixels])を、ぼかさずに正方形で表示し、追跡セルを赤枠で重ねる(全体平均のときは画像全体)。 */
+@Composable
+private fun DebugImage(f: DebugFrame, pixels: IntArray) {
+    val bitmap = remember(f, pixels) {
+        Bitmap.createBitmap(pixels, f.size, f.size, Bitmap.Config.ARGB_8888).asImageBitmap()
+    }
+    Box(Modifier.aspectRatio(1f)) {
+        Image(
+            bitmap,
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.None,
+        )
+        Canvas(Modifier.fillMaxSize()) {
+            val cell = size.width / f.size
+            if (f.roiCol < 0) {
+                drawRect(Color.Red, style = Stroke(width = 3f))
+            } else {
+                // 1セルは小さいので、中心を合わせて最小 18px の枠にする
+                val b = maxOf(cell * 3f, 18f)
+                val cx = (f.roiCol + 0.5f) * cell
+                val cy = (f.roiRow + 0.5f) * cell
+                drawRect(Color.Red, topLeft = Offset(cx - b / 2f, cy - b / 2f), size = Size(b, b), style = Stroke(width = 3f))
+            }
         }
     }
 }

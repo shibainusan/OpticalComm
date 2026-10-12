@@ -26,10 +26,22 @@ class DebugFrame(
     val roiV: Float,
     /** 1フレーム前との Y 差分の画像(128 が差なし、明るいほど増加、暗いほど減少。同じ向き)。 */
     val diffPixels: IntArray,
+    /** 縮小後の Y/U/V を RGB にしたカラー画像(同じ向き)。 */
+    val yuvPixels: IntArray,
     /** トラッキング中セルの Y 差分(今回 - 前回)と、全セル中の最大絶対値。 */
     val roiDiff: Float,
     val maxAbsDiff: Float,
 )
+
+/** YUV(各 0..255、U/V は 128 が無彩色)を ARGB にする(BT.601、フルレンジ)。 */
+fun yuvToArgb(y: Float, u: Float, v: Float): Int {
+    val du = u - 128f
+    val dv = v - 128f
+    val r = (y + 1.402f * dv).toInt().coerceIn(0, 255)
+    val g = (y - 0.344f * du - 0.714f * dv).toInt().coerceIn(0, 255)
+    val b = (y + 1.772f * du).toInt().coerceIn(0, 255)
+    return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+}
 
 /**
  * センサー向きのセル位置 ([col], [row])(一辺 [n] セル)を、表示向きの位置へ変換する。

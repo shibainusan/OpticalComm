@@ -254,4 +254,14 @@ class ProtocolTest {
         val ev = decodeAll(bits).single()
         assertEquals(DecodeEvent.CrcError(1, "a", 5 xor 8), ev)
     }
+
+    @Test
+    fun yuvToArgbMatchesBt601() {
+        assertEquals(0xFF808080.toInt(), yuvToArgb(128f, 128f, 128f))
+        assertEquals(0xFFFFFFFF.toInt(), yuvToArgb(255f, 128f, 128f))
+        assertEquals(0xFF000000.toInt(), yuvToArgb(0f, 128f, 128f))
+        // V が高いと赤、U が高いと青に寄る
+        assertTrue(((yuvToArgb(128f, 128f, 200f) shr 16) and 0xFF) > 128)
+        assertTrue((yuvToArgb(128f, 200f, 128f) and 0xFF) > 128)
+    }
 }
